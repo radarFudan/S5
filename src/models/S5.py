@@ -44,42 +44,71 @@ def binary_operator(q_i, q_j):
     return A_j * A_i, A_j * b_i + b_j
 
 
-def apply_ssm(Lambda_bar, B_bar, C_tilde, input_sequence, conj_sym):
+def apply_ssm(Lambda_bar, B_bar, C_tilde, input_sequence, hiddens, conj_sym, hidden_state_method=None, key=None):
     """ Compute the LxH output of discretized SSM given an LxH input.
         Args:
             Lambda_bar (complex64): discretized diagonal state matrix    (P,)
             B_bar      (complex64): discretized input matrix             (P, H)
             C_tilde    (complex64): output matrix                        (H, P)
             input_sequence (float32): input sequence of features         (L, H)
+            hiddens        (float32): hidden state                       (1, H)
             conj_sym (bool):         whether conjugate symmetry is enforced
-            bidirectional (bool):    whether bidirectional setup is used,
-                                  Note for this case C_tilde will have 2P cols
+            hidden_state_method (str): Which hidden state method used, zero or previous or random. Defaults to None
+            key (jax.random.PRNGKey): random key for random hidden state initialization. Defaults to None
+
         Returns:
             ys (float32): the SSM outputs (S5 layer preactivations)      (L, H)
     """
-    Lambda_elements = Lambda_bar * np.ones((input_sequence.shape[0],
+    Lambda_elements = Lambda_bar * np.ones((input_sequence.shape[0] + 1,
                                             Lambda_bar.shape[0]))
     Bu_elements = jax.vmap(lambda u: B_bar @ u)(input_sequence)
+
+    if hidden_state_method == "previous":
+        # print("Using previous hidden state")
+        # print("In apply_ssm, hiddens shape", hiddens.shape)
+        assert hiddens is not None
+        assert len(hiddens.shape) == 2
+        Bu_elements = np.vstack([hiddens, Bu_elements])
+    elif hidden_state_method == "zero":
+        # print("Using zero init hidden state")
+        hiddens = jax.numpy.zeros((1, Bu_elements.shape[1]))
+        Bu_elements = np.vstack([hiddens, Bu_elements])
+    elif hidden_state_method == "trueRandom":
+        assert key is not None
+        key, subkey = jax.random.split(key)
+        scale_factor = np.abs(Bu_elements[0,:]).max()
+
+        print("Subkey is", subkey)
+        hiddens = jax.random.normal(subkey, (1, Bu_elements.shape[1])) * scale_factor
+        Bu_elements = np.vstack([hiddens, Bu_elements])
+    else:
+        raise NotImplementedError(
+            "hidden_state_method {} not implemented".format(hidden_state_method)
+        )
 
     _, xs = jax.lax.associative_scan(binary_operator, (Lambda_elements, Bu_elements))
 
     if conj_sym:
-        return jax.vmap(lambda x: 2*(C_tilde @ x).real)(xs)
+        return jax.vmap(lambda x: 2*(C_tilde @ x).real)(xs[1:, :]), xs[-1:, :]
     else:
-        return jax.vmap(lambda x: (C_tilde @ x).real)(xs)
+        return jax.vmap(lambda x: (C_tilde @ x).real)(xs[1:, :]), xs[-1:, :]
 
 
-def apply_ssm_with_feedthrough(input_sequence, Lambda_bar, B_bar, C_tilde, D, conj_sym):
-    ys = apply_ssm(Lambda_bar,
+def apply_ssm_with_feedthrough(input_sequence, hiddens, Lambda_bar, B_bar, C_tilde, D, conj_sym, key, hidden_state_method):
+    ys, hiddens = apply_ssm(Lambda_bar,
                    B_bar,
                    C_tilde,
                    input_sequence,
-                   conj_sym)
+                   hiddens, 
+                   conj_sym,
+                   hidden_state_method=hidden_state_method,
+                   key=key,
+                   )
 
     # Add feedthrough matrix output Du;
     Du = jax.vmap(lambda u: D * u)(input_sequence)
     output_sequence = ys + Du
-    return output_sequence
+    return output_sequence, hiddens
 
 
 class S5SSM(nn.Module):
@@ -96,6 +125,9 @@ class S5SSM(nn.Module):
     conj_sym: bool = True
     clip_eigs: bool = False
     activation: str = "gelu"
+
+    hidden_state_method: str = None
+    rng_collection: str = "hidden_state"
 
     """ The S5 SSM
         Args:
@@ -121,6 +153,9 @@ class S5SSM(nn.Module):
                                    True recommended for autoregressive task/unbounded sequence lengths
                                    Discussed in https://arxiv.org/pdf/2206.11893.pdf.
             activation   (str):    type of activation to apply to SSM outputs
+
+            hidden_state_method (str): Which hidden state method used, zero or previous or random. Defaults to None
+            rng_collection (str): Which rng collection to use for hidden state initialization. Defaults to "hidden_state"
 
     """
 
@@ -197,7 +232,7 @@ class S5SSM(nn.Module):
         # Discretize
         self.Lambda_bar, self.B_bar = discretize_zoh(self.Lambda, B_tilde, step)
 
-    def __call__(self, input_sequence, training=True):
+    def __call__(self, input_sequence, hiddens, training=True, layer_index=None):
         """
         Compute the LxH output of the S5 SSM given an LxH input sequence
         using a parallel scan.
@@ -211,15 +246,24 @@ class S5SSM(nn.Module):
         input_sequence = input_sequence[:, 0, :, 0]
         input_sequence = input_sequence.transpose(0, 2, 1)
         # input sequence is now bsz, L, H
-
-        ys = jax.vmap(apply_ssm_with_feedthrough,
-                      in_axes=(0, None, None, None, None, None)
+        # hiddens are bsz, 1, H
+        
+        ys, new_hiddens = jax.vmap(partial(apply_ssm_with_feedthrough, hidden_state_method=self.hidden_state_method),
+                      in_axes=(0, 0, None, None, None, None, None, None)
                       )(input_sequence,
+                        hiddens,
                         self.Lambda_bar,
                         self.B_bar,
                         self.C_tilde,
                         self.D,
-                        self.conj_sym)  # ys is bsz, L, H
+                        self.conj_sym,
+                        self.make_rng(self.rng_collection),
+                        )  # ys is bsz, L, H
+        
+        # if layer_index < 1:
+        #     print("In S5SSM, old hidden shape", hiddens.shape)
+        #     print("In S5SSM, new hidden shape", new_hiddens.shape)
+        assert new_hiddens.shape == hiddens.shape
 
         if self.activation in ["full_glu"]:
             ys = nn.activation.gelu(ys, approximate=False)
@@ -240,10 +284,10 @@ class S5SSM(nn.Module):
         output_sequence = np.expand_dims(ys.transpose(0, 2, 1), (1, 3))
         # output sequence is bsz, 1, H, 1, L
 
-        return output_sequence
+        return output_sequence, new_hiddens
 
 
-def init_S5SSM(d_model, ssm_size, blocks, ssm_args):
+def init_S5SSM(d_model, ssm_size, blocks, ssm_args, hidden_state_method):
     """Convenience function that will be used to initialize the SSM.
        Same arguments as defined in S5SSM above."""
 
@@ -274,6 +318,7 @@ def init_S5SSM(d_model, ssm_size, blocks, ssm_args):
                  Vinv,
                  H=d_model,
                  P=ssm_size,
+                 hidden_state_method=hidden_state_method,
                  **ssm_args)
 
 
@@ -294,10 +339,12 @@ class S5Operator(nn.Module):
     filter_cls: str = 'None'
     post_order_ffn: bool = False
     jit_filter: bool = False
-    short_filter_order: int = 3
+    # short_filter_order: int = 3
     activation_type: str = "id"
     return_state: bool = False
     filter_args: dict = None
+
+    hidden_state_method: str = None
 
     def setup(self):
         r"""
@@ -318,14 +365,14 @@ class S5Operator(nn.Module):
             filter_dropout: (float): Dropout probability for the filter. Defaults to 0.0
             post_order_ffn: (bool): Apply a dense layer between steps of the recurrence. Defaults to False
             jit_filter: (bool): Whether JIT the implicit filter function. Defaults to False
-            short_filter_order: (int): Length of the explicit input convolutional filter. Defaults to 3
+            short_filter_order: (int): Length of the explicit input convolutional filter. Defaults to 3, Removed
             activation_type: (str): type of act between kernel output and FF (default identity)
             return_state: (bool): whether to return a state
         """
 
         assert self.d_model % self.num_heads == 0, f'Model dimension {self.d_model} must be divisible by num heads {self.num_heads}'
         assert self.l_max % self.num_blocks == 0, f'Maximum signal length {self.l_max} must be divisible by block dimension {self.num_blocks}'
-        block_dim = self.l_max // self.num_blocks
+        # block_dim = self.l_max // self.num_blocks
         self.head_dim = self.d_model // self.num_heads
 
         self.activation = Activation(self.activation_type)
@@ -353,31 +400,27 @@ class S5Operator(nn.Module):
     def setup_filters(self, filter_cls, filter_args):
         "Initializes the explicit and implicit filters"
         assert self.order >= 2, f'Order must be at least 2, (got {self.order})'
-        total_width = self.d_model * self.inner_factor * (self.order + 1)
-
-        self.short_filter = nn.Conv(total_width,
-                                    [self.short_filter_order],
-                                    feature_group_count=total_width,
-                                    padding=self.short_filter_order - 1)
+        # total_width = self.d_model * self.inner_factor * (self.order + 1)
 
         if self.filter_cls == 'hyena_S5':
             # print('Using S5 for filters')
-            self.filter_fn = [init_S5SSM(self.d_model, self.ssm_size, self.ssm_blocks, filter_args) for _ in range(self.order-1)]
+            # print(self.hidden_state_method)
+            self.filter_fn = [init_S5SSM(self.d_model, self.ssm_size, self.ssm_blocks, filter_args, hidden_state_method=self.hidden_state_method,) for _ in range(self.order-1)]
         else:
             raise NotImplementedError("filter {} not implemented".format(self.filter_cls))
 
     @nn.compact
-    def __call__(self, u, training):
-        l = u.shape[-2]
-        l_filter = min(l, self.l_max)
-        u = self.in_proj(u)
+    def __call__(self, u, hiddens, training, layer_index=None):
+        # l = u.shape[-2]
+        # l_filter = min(l, self.l_max)
+        u = self.in_proj(u) # b * l * ((order+1) * d_model)
         # u = rearrange(u, 'b l d -> b d l')
 
         # note u is still 'b l d'
-        uc = self.short_filter(u)[:, :l_filter]
+        # uc = self.short_filter(u)[:, :l_filter]
         # uc is 'b l d'
-        uc = rearrange(uc, 'b l d -> b d l')
-        uc = rearrange(uc, 'b (ho v) (z l) -> b ho v z l',
+        # uc = rearrange(u, 'b l d -> b d l')
+        uc = rearrange(u, 'b (z l) (ho v) -> b ho v z l',
                        z=self.num_blocks,
                        ho=self.num_heads,
                        v=self.head_dim * (self.order + 1)
@@ -387,13 +430,16 @@ class S5Operator(nn.Module):
         split_width = int(width // self.d_model)
         *x, v = np.split(uc, split_width, axis=2)
 
+        new_hiddens = []
+
         for o, x_i in enumerate(reversed(x[1:])):
             if self.outer_mixing:
                 raise NotImplementedError("outer mixing not implemented for hyena_S5 yet")
             else:
                 v = self.dropout(deterministic=not training)(v * x_i)
 
-            v = self.filter_fn[o](v)
+            v, new_hidden = self.filter_fn[o](v, hiddens[:,o,:,:], training=training, layer_index=layer_index)
+            new_hiddens.append(new_hidden)
 
             if self.post_order_ffn:
                 w = self.ord_proj_w[o]
@@ -404,9 +450,12 @@ class S5Operator(nn.Module):
         y = self.activation(rearrange(v * x[0], 'b h v z l -> b (z l) (h v)', z=self.num_blocks, h=self.num_heads))
         y = self.out_proj(y)
 
+        new_hiddens_stacked = np.stack(new_hiddens, axis=1)
+
         if self.return_state:
+            return y, new_hiddens_stacked
+        else:
             return y, None
-        return y
 
     @property
     def d_output(self):

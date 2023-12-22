@@ -111,7 +111,7 @@ class Block(nn.Module):
         The standard block is: LN -> MHA -> Dropout -> Add -> LN -> MLP -> Dropout -> Add.
         [Ref: https://arxiv.org/abs/2002.04745]
         Here we have: Dropout -> Add -> LN -> MHA -> Dropout -> Add -> LN -> MLP, returning both
-        the hidden_states (output of the MLP) and the residual.
+        the preds (output of the MLP) and the residual.
         This is for performance reasons, as we can fuse the dropout, add and LayerNorm.
         The residual needs to be provided (except for the very first block).
         For prenorm=False, this Block has the same structure as a regular postnorm Transformer
@@ -140,56 +140,58 @@ class Block(nn.Module):
             self.norm2 = self.norm_cls()
 
     @nn.compact
-    def __call__(self, hidden_states, training, residual=None,
-                 mixer_subset=None, mixer_kwargs=None):
+    def __call__(self, preds, hiddens, training, residual=None,
+                 mixer_subset=None, mixer_kwargs=None, layer_index=None):
         r"""Pass the input through the encoder layer.
         Args:
-            hidden_states: the sequence to the encoder layer (required).
+            preds: the sequence to the encoder layer (required).
             training: bool to control dropout
-            residual: if postnorm, residual=None, If prenorm, hidden_states = Attn/MLP(LN(residual))
+            residual: if postnorm, residual=None, If prenorm, preds = Attn/MLP(LN(residual))
             mixer_subset: for cross-attention only. If not None, will take a subset of x
                 before applying the query projection. Useful for e.g., ViT where we only care
                 about the CLS token in the last layer.
         """
         if self.prenorm:
-            dropped = self.drop_path1(self.dropout1(deterministic=not training)(hidden_states), training)
+            dropped = self.drop_path1(self.dropout1(deterministic=not training)(preds), training)
             residual = (dropped + residual) if residual is not None else dropped
-            hidden_states = self.norm1(residual)
+            preds = self.norm1(residual)
 
             if mixer_kwargs is None:
                 mixer_kwargs = {}
             if mixer_subset is not None:
                 mixer_kwargs['mixer_subset'] = mixer_subset
-            hidden_states = self.mixer(hidden_states, training, **mixer_kwargs)
+            preds, new_hidden = self.mixer(preds, hiddens, training, layer_index=layer_index, **mixer_kwargs)
             if mixer_subset is not None:
                 residual = residual[:, mixer_subset]
             if not isinstance(self.mlp, Identity):
-                dropped = self.drop_path2(self.dropout2(deterministic=not training)(hidden_states), training)
+                dropped = self.drop_path2(self.dropout2(deterministic=not training)(preds), training)
                 residual = (dropped + residual) if residual is not None else dropped
-                hidden_states = self.norm2(residual)
+                preds = self.norm2(residual)
 
-                hidden_states = self.mlp(hidden_states)
-            return hidden_states, residual
+                preds = self.mlp(preds)
+            # if layer_index < 1:
+            #     print("In block, after modification new hiddens shape", new_hidden.shape)
+            return preds, residual, new_hidden
         else:
             assert residual is None
             mixer_out = self.mixer(
-                hidden_states, **(mixer_kwargs if mixer_kwargs is not None else {})
+                preds, **(mixer_kwargs if mixer_kwargs is not None else {})
             )
             if self.return_residual:  # mixer out is actually a pair here
-                mixer_out, hidden_states = mixer_out
+                mixer_out, preds = mixer_out
 
-            hidden_states = self.norm1(self.drop_path1(self.dropout1(deterministic=not training)(mixer_out), training)
-                                       + hidden_states)
+            preds = self.norm1(self.drop_path1(self.dropout1(deterministic=not training)(mixer_out), training)
+                                       + preds)
 
             if not isinstance(self.mlp, Identity):
-                mlp_out = self.mlp(hidden_states)
+                mlp_out = self.mlp(preds)
                 if self.return_residual:  # mlp out is actually a pair here
-                    mlp_out, hidden_states = mlp_out
+                    mlp_out, preds = mlp_out
 
-                hidden_states = self.norm2(self.drop_path2(self.dropout2(deterministic=not training)(mlp_out), training)
-                                           + hidden_states)
+                preds = self.norm2(self.drop_path2(self.dropout2(deterministic=not training)(mlp_out), training)
+                                           + preds)
 
-            return hidden_states
+            return preds
 
 
 def create_mixer_cls(layer=None, d_model=None, n_layer=None, l_max=None, layer_kwargs=None,
@@ -271,18 +273,34 @@ class LMBackbone(nn.Module):
         self.ln_f = nn.LayerNorm(epsilon=self.layer_norm_epsilon)
 
     @nn.compact
-    def __call__(self, input_ids, training, position_ids=None):
-        hidden_states = self.embeddings(input_ids, position_ids=position_ids)
+    def __call__(self, input_ids, hiddens, training, position_ids=None):
+        preds = self.embeddings(input_ids, position_ids=position_ids)
         residual = None
 
-        for layer in self.layers:
-            hidden_states, residual = layer(hidden_states, training, residual)
+        # print("In simple_lm, hiddens shape", hiddens.shape)
 
-        dropped = self.drop_f(deterministic=not training)(hidden_states)
+        if len(hiddens.shape) == 6:
+            hiddens = np.squeeze(hiddens, axis=-6)
+        # print("Len of hiddens.shape, after shape check", len(hiddens.shape))
+
+        new_hiddens = []
+        for layer_index, layer in enumerate(self.layers):
+            # print("residaul is ", residual)
+            if layer_index < 1:
+                assert preds is not None
+                assert hiddens[:,layer_index, :, :, :] is not None
+                # print("preds.shape", preds.shape, "\nhiddens at layer shape", hiddens[:,layer_index, :, :, :].shape)
+            preds, residual, new_hidden = layer(preds, hiddens[:, layer_index, :, :, :], training, residual, layer_index=layer_index)
+            new_hiddens.append(new_hidden)
+
+        dropped = self.drop_f(deterministic=not training)(preds)
         residual = (dropped + residual) if residual is not None else dropped
-        hidden_states = self.ln_f(residual)
+        preds = self.ln_f(residual)
 
-        return hidden_states
+        new_hiddens = np.stack(new_hiddens, axis=1)
+        # print("New hiddens stacked shape", new_hiddens.shape)
+
+        return preds, new_hiddens
 
     def attend(self, input):
         return self.embeddings.attend(input)
@@ -318,8 +336,11 @@ class SimpleLMHeadModel(nn.Module):
             initializer_cfg=self.initializer_cfg
         )
 
-    def __call__(self, input_ids, training=True, position_ids=None, state=None):
-        hidden_states = self.backbone(input_ids, training, position_ids=position_ids)
-        lm_logits = self.backbone.attend(hidden_states)
+    def __call__(self, input_ids, hiddens, training=True, position_ids=None, state=None):
+        print("In SimpleLMHeadModel", input_ids.shape, hiddens.shape)
+        preds, new_hiddens = self.backbone(input_ids, hiddens, training, position_ids=position_ids)
+        # assert new_hiddens is not None
+        # print("Returned new_hiddens", new_hiddens.shape)
+        lm_logits = self.backbone.attend(preds)
         CausalLMOutput = namedtuple('CausalLMOutput', ['logits'])
-        return CausalLMOutput(logits=lm_logits), None
+        return CausalLMOutput(logits=lm_logits), new_hiddens

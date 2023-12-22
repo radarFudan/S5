@@ -25,6 +25,7 @@ from .datasets.detokenizer import DATASET_TOKENIZATION_REGISTRY
 from ..utils.train import get_logger
 logger = get_logger()
 
+from .equidistant_sampler import EquidistantSampler
 
 # https://github.com/numpy/numpy/issues/18294
 class SHMArray(np.ndarray): #copied from https://numpy.org/doc/stable/user/basics.subclassing.html#slightly-more-realistic-example-attribute-added-to-existing-array
@@ -47,7 +48,7 @@ class LMDataModuleWT103(SequenceDataset):
                  detokenize=False, val_only=False, batch_size=32, batch_size_eval=None, num_workers=1,
                  shuffle=False, pin_memory=False, fault_tolerant=False, ddp=False,
                  fast_forward_epochs=None, fast_forward_batches=None,
-                 use_shmem=True, *args, **kwargs):
+                 use_shmem=True, consecutive_loader=None, *args, **kwargs):
         self.dataset_name = dataset_name
         self.dataset_config_name = dataset_config_name
         self.tokenizer_name = tokenizer_name
@@ -77,6 +78,7 @@ class LMDataModuleWT103(SequenceDataset):
         self.use_shmem = use_shmem
         if self.use_shmem:
             assert cache_dir is not None
+        self.consecutive_loader = consecutive_loader
 
     def prepare_data(self):
         if self.cache_dir is None:  # Just download the dataset
@@ -283,17 +285,29 @@ class LMDataModuleWT103(SequenceDataset):
         return self._data_loader(self.dataset_test, batch_size=self.batch_size_eval)
 
     def _data_loader(self, dataset: Dataset, batch_size: int, shuffle: bool = False,
-                     sampler=None, drop_last=False) -> DataLoader:
-        return DataLoader(
-            dataset,
-            batch_size=batch_size,
-            num_workers=1,  # Data is already in memory, we don't need many workers
-            shuffle=shuffle,
-            sampler=sampler,
-            drop_last=drop_last,
-            pin_memory=self.pin_memory,
-            # persistent_workers=True
-        )
+                     sampler=None, drop_last=False, shift=None) -> DataLoader:
+        if self.consecutive_loader:
+            print("Using consecutive loader")
+            batch_sampler=EquidistantSampler(len(dataset), batch_size=batch_size, shift=shift)
+
+            return DataLoader(
+                dataset,
+                num_workers=1,  # Data is already in memory, we don't need many workers
+                batch_sampler=batch_sampler, 
+                pin_memory=self.pin_memory,
+            )
+        else:
+            print("Not using consecutive loader")
+            return DataLoader(
+                dataset,
+                batch_size=batch_size,
+                num_workers=1,  # Data is already in memory, we don't need many workers
+                shuffle=shuffle,
+                sampler=sampler,
+                drop_last=drop_last,
+                pin_memory=self.pin_memory,
+                # persistent_workers=True
+            )
 
     def load_state_dict(self, checkpoint):
         if self.fault_tolerant:

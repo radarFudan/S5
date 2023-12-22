@@ -54,13 +54,13 @@ def map_nested_fn_with_keyword(keyword_1, keyword_2):
 
     return map_fn
 
-
 @partial(jax.jit, static_argnums=(1))
 def reshape_batch_per_device(x, num_devices):
     batch_size_per_device, ragged = divmod(x.shape[0], num_devices)
     if ragged:
         msg = "batch size must be divisible by device count, got {} and {}."
-        raise ValueError(msg.format(x.shape[0], num_devices))
+        # raise ValueError(msg.format(x.shape[0], num_devices))
+        return x[:num_devices * batch_size_per_device,:].reshape((num_devices, batch_size_per_device, ) + (x.shape[1:]))    
     return x.reshape((num_devices, batch_size_per_device, ) + (x.shape[1:]))
 
 
@@ -81,7 +81,7 @@ def get_first_device(x):
 def print_model_size(params, name=''):
     fn_is_complex = lambda x: x.dtype in [np.complex64, np.complex128]
     param_sizes = map_nested_fn(lambda k, param: param.size * (2 if fn_is_complex(param) else 1))(params)
-    total_params_size = sum(jax.tree_leaves(param_sizes))
+    total_params_size = sum(jax.tree_util.tree_leaves(param_sizes))
     print('model parameter count:', total_params_size)
 
 
@@ -148,8 +148,8 @@ def get_optimizer(config, params):
         return tx, learning_rate_fn
 
 
-def init_model_state(rng_key, model, input, config):
-    variables = model.init({k: rng_key for k in ['params', *config.rng_keys]}, input, training=True
+def init_model_state(rng_key, model, inputs, hiddens, config):
+    variables = model.init({k: rng_key for k in ['params', *config.rng_keys]}, inputs, hiddens, training=True
     ).unfreeze()
     params = variables.pop('params')
     model_state = variables
@@ -162,7 +162,7 @@ def init_model_state(rng_key, model, input, config):
         params=params,
         tx=tx,
         model_state=model_state
-    ), learning_rate_fn
+    ), hiddens, learning_rate_fn
 
 
 class AverageMeter(object):

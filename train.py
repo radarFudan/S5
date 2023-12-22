@@ -56,6 +56,17 @@ def main():
     inputs = jnp.array(batch[0].numpy())
     targets = jnp.array(batch[1].numpy())
 
+    num_devices = jax.local_device_count()
+    batch_size_per_device = inputs.shape[0]
+    if config.layer == "S5_operator":
+        zero_hiddens = jax.numpy.zeros((batch_size_per_device, config.n_layer, config.layer_kwargs["order"], 1, config.layer_kwargs["ssm_size"]))
+        zero_hiddens_init_model_state = jax.numpy.zeros((batch_size_per_device // num_devices, config.n_layer, config.layer_kwargs["order"], 1, config.layer_kwargs["ssm_size"]))
+    elif config.layer == "hyena":
+        zero_hiddens = jax.numpy.zeros((batch_size_per_device, config.n_layer, config.layer_kwargs["order"], 1, config.d_model, 1, 1))
+        zero_hiddens_init_model_state = None
+    else:
+        raise NotImplementedError(f"Hidden state initialization for {config.layer} not implemented")
+
     # Reshape to (num_devices, device_batch_size, seq_len, dim)
     num_devices = jax.local_device_count()
     inputs = reshape_batch_per_device(inputs, num_devices)
@@ -64,7 +75,7 @@ def main():
 
     batch = get_first_device(batch)
     model = get_model(config)
-    state, schedule_fn = init_model_state(init_rng, model, batch[0], config)
+    state, _, schedule_fn = init_model_state(init_rng, model, batch[0], zero_hiddens_init_model_state, config)
     if config.ckpt is not None:
         state = checkpoints.restore_checkpoint(osp.join(config.ckpt, 'checkpoints'), state)
         print('Restored from checkpoint')
@@ -76,30 +87,31 @@ def main():
 
     rngs = random.split(rng, jax.local_device_count())
     while iteration <= config.total_steps:
-        iteration, state, rngs = train(iteration, log_metrics, state, train_loader,
+        iteration, state, rngs = train(config, iteration, log_metrics, state, zero_hiddens, train_loader,
                                        schedule_fn, rngs, ckpt_dir)
 
-        validate(iteration, state, val_loader, val=True)
+        rngs = validate(config, iteration, state, zero_hiddens, val_loader, rngs, val=1)
 
-        validate(iteration, state, test_loader)
+        rngs = validate(config, iteration, state, zero_hiddens, test_loader, rngs, val=2)
 
 
-def train_step(batch, state, rng, vocab_size):
+def train_step(config, batch, state, hiddens, rng, vocab_size):
     new_rng, *rngs = random.split(rng, len(config.rng_keys) + 1)
     rngs = {k: r for k, r in zip(config.rng_keys, rngs)}
 
     inputs = batch[0]
     targets = batch[1]
 
-    def loss_fn(params):
+    def loss_fn(params, hiddens):
         variables = {'params': params, **state.model_state}
         out = state.apply_fn(
             variables,
             inputs,
+            hiddens,
             training=True,
             rngs=rngs
         )
-        out_tuple, _ = out
+        out_tuple, hiddens = out
         logits = out_tuple.logits
         labels = jax.nn.one_hot(targets, num_classes=vocab_size)
 
@@ -107,27 +119,57 @@ def train_step(batch, state, rng, vocab_size):
         loss = loss.mean()
         preds = jnp.argmax(logits, axis=-1)
         accuracy = (preds == targets).mean()
+        perplexity = jnp.exp(loss)
         out_dict = {'loss': loss,
-                    'accuracy': accuracy}
+                    'accuracy': accuracy,
+                    'perplexity': perplexity
+                    }
 
-        return loss, out_dict
+        return loss, (out_dict, hiddens)
 
-    return_dict, grads = jax.value_and_grad(loss_fn,
-                                            has_aux=True)(state.params)
+    (loss, (out_dict, hiddens)), grads = jax.value_and_grad(loss_fn,
+                                            has_aux=True)(state.params, hiddens)
     grads = jax.lax.pmean(grads, axis_name='batch')
+
+    def norm(x):
+        return jnp.sqrt(jnp.sum(x**2))
+    
+    def grad_over_weight_max(x, y, epsilon=1e-9):
+        grad_over_weight = jnp.abs(x) / (jnp.abs(y) + epsilon)
+        return grad_over_weight.max()
+    
+    def grad_over_weight_min(x, y, epsilon=1e-9):
+        grad_over_weight = jnp.abs(x) / (jnp.abs(y) + epsilon)
+        return grad_over_weight.min()
+    
+    g_norms = jax.tree_map(norm, grads)
+    gow_maxs = jax.tree_map(grad_over_weight_max, grads, state.params)
+    gow_mins = jax.tree_map(grad_over_weight_min, grads, state.params)
+
     new_state = state.apply_gradients(
         grads=grads,
     )
 
-    return new_state, return_dict[1], new_rng
+    return new_state, hiddens, out_dict, new_rng, g_norms, gow_maxs, gow_mins
 
 
-def train(iteration, log_metrics, state, train_loader, schedule_fn, rngs, ckpt_dir):
+def flatten_tree_with_names(tree):
+    # Flatten the tree with paths
+    flattened_with_paths, _ = jax.tree_util.tree_flatten_with_path(tree)
+    
+    # Create a dictionary with the concatenated path as the key
+    flat_dict = {'/'.join(map(str, path)): value for path, value in flattened_with_paths}
+    
+    return flat_dict
+
+
+def train(config, iteration, log_metrics, state, hiddens, train_loader, schedule_fn, rngs, ckpt_dir):
     progress = ProgressMeter(config.total_steps,
                              ['time', 'data'] + log_metrics)
+    is_master_process = jax.process_index() == 0
 
     num_devices = jax.local_device_count()
-    p_train_step = jax.pmap(partial(train_step, vocab_size=config.vocab_size), axis_name='batch')
+    p_train_step = jax.pmap(partial(train_step, config=config, vocab_size=config.vocab_size), axis_name='batch')
 
     end = time.time()
     for batch in train_loader:
@@ -138,11 +180,24 @@ def train(iteration, log_metrics, state, train_loader, schedule_fn, rngs, ckpt_d
         inputs = reshape_batch_per_device(inputs, num_devices)
         targets = reshape_batch_per_device(targets, num_devices)
         batch = (inputs, targets)
+        hiddens = reshape_batch_per_device(hiddens, num_devices)
 
         batch_size = batch[0].shape[1]
         progress.update(data=time.time() - end)
 
-        state, return_dict, rngs = p_train_step(batch=batch, state=state, rng=rngs)
+        if config.layer == "S5_operator":
+            if len(hiddens.shape) > 6:
+                hiddens = jax.numpy.squeeze(hiddens, axis=-6)
+        elif config.layer == "hyena":
+            if len(hiddens.shape) > 8:
+                hiddens = jax.numpy.squeeze(hiddens, axis=-8)
+        else:
+            raise NotImplementedError(f"Hidden state initialization for {config.layer} not implemented")
+
+        if iteration < 3:
+            print(f"hiddens shape {hiddens.shape}")
+
+        state, hiddens, return_dict, rngs, g_norms, gow_maxs, gow_mins = p_train_step(batch=batch, state=state, hiddens=hiddens, rng=rngs)
 
         metrics = {k: return_dict[k].mean() for k in log_metrics}
         metrics = {k: v.astype(jnp.float32) for k, v in metrics.items()}
@@ -150,9 +205,10 @@ def train(iteration, log_metrics, state, train_loader, schedule_fn, rngs, ckpt_d
 
         if is_master_process and iteration % config.log_interval == 0:
             wandb.log({'train/lr': schedule_fn(iteration)}, step=iteration)
-            wandb.log({**{f'train/{metric}': val
-                          for metric, val in metrics.items()}
-                       }, step=iteration)
+            wandb.log({**{f'train/{metric}': val for metric, val in metrics.items()}}, step=iteration)
+            wandb.log({**{f'grad_norm/{layer}': jnp.linalg.norm(norm) for layer, norm in flatten_tree_with_names(g_norms).items()}}, step=iteration)
+            wandb.log({**{f'gow_max/{layer}': jnp.linalg.norm(norm) for layer, norm in flatten_tree_with_names(gow_maxs).items()}}, step=iteration)
+            wandb.log({**{f'gow_min/{layer}': jnp.linalg.norm(norm) for layer, norm in flatten_tree_with_names(gow_mins).items()}}, step=iteration)
 
         if iteration % config.log_interval == 0:
             progress.display(iteration)
@@ -172,7 +228,10 @@ def train(iteration, log_metrics, state, train_loader, schedule_fn, rngs, ckpt_d
     return iteration, state, rngs
 
 
-def eval_step(batch, state, vocab_size):
+def eval_step(config, batch, state, hiddens, rng, vocab_size):
+    new_rng, *rngs = random.split(rng, len(config.rng_keys) + 1)
+    rngs = {k: r for k, r in zip(config.rng_keys, rngs)}
+
     inputs = batch[0]
     targets = batch[1]
 
@@ -180,19 +239,21 @@ def eval_step(batch, state, vocab_size):
     out = state.apply_fn(
         variables,
         inputs,
+        hiddens,
         training=False,
+        rngs=rngs
     )
-    out_tuple, _ = out
+    out_tuple, hiddens = out
     logits = out_tuple.logits
     labels = jax.nn.one_hot(targets, num_classes=vocab_size)
 
     loss = optax.softmax_cross_entropy(logits, labels)
     preds = jnp.argmax(logits, axis=-1)
     accuracy = (preds == targets)
-    return loss, accuracy
+    return loss, accuracy, hiddens, new_rng
 
 
-def eval_step_synthetic(batch, state, vocab_size):
+def eval_step_synthetic(config, batch, state, vocab_size):
     """Different eval loss functions for
        synthetic associative_recall task"""
     inputs = batch[0]
@@ -215,30 +276,44 @@ def eval_step_synthetic(batch, state, vocab_size):
     return loss, accuracy
 
 
-def validate(iteration, state, test_loader, val=False):
+def validate(config, iteration, state, hiddens, test_loader, rngs, val=0, seq_len=None):
     losses = jnp.array([])
     accs = jnp.array([])
+    is_master_process = jax.process_index() == 0
 
     # Todo: may need to change for multinode
     num_devices = jax.local_device_count()
 
     if config.dataset in ["wikitext103"]:
-        p_eval_step = jax.pmap(partial(eval_step, vocab_size=config.vocab_size), axis_name='batch')
+        p_eval_step = jax.pmap(partial(eval_step, config=config, vocab_size=config.vocab_size), axis_name='batch')
     elif config.dataset in ["icl_synthetics"]:
-        p_eval_step = jax.pmap(partial(eval_step_synthetic, vocab_size=config.vocab_size), axis_name='batch')
+        pass
+        # p_eval_step = jax.pmap(partial(eval_step_synthetic, config=config, vocab_size=config.vocab_size), axis_name='batch')
     else:
         raise NotImplementedError("Dataset not implemented")
 
     for batch in test_loader:
         inputs = jnp.array(batch[0].numpy())
         targets = jnp.array(batch[1].numpy())
+        if inputs.shape[0] < config.data_kwargs["batch_size_eval"]:
+            continue # TODO, for correctness purpose need to modify the evaluation. 
 
         # Reshape to (num_devices, device_batch_size, seq_len, dim)
         inputs = reshape_batch_per_device(inputs, num_devices)
         targets = reshape_batch_per_device(targets, num_devices)
         batch = (inputs, targets)
+        hiddens = reshape_batch_per_device(hiddens, num_devices)
 
-        return_loss, return_acc = p_eval_step(batch=batch, state=state)
+        if config.layer == "S5_operator":
+            if len(hiddens.shape) > 6:
+                hiddens = jax.numpy.squeeze(hiddens, axis=-6)
+        elif config.layer == "hyena":
+            if len(hiddens.shape) > 8:
+                hiddens = jax.numpy.squeeze(hiddens, axis=-8)
+        else:
+            raise NotImplementedError(f"Hidden state initialization for {config.layer} not implemented")
+
+        return_loss, return_acc, hiddens, rngs = p_eval_step(batch=batch, state=state, hiddens=hiddens, rng=rngs)
         losses = jnp.append(losses, return_loss)
         accs = jnp.append(accs, return_acc)
 
@@ -246,10 +321,17 @@ def validate(iteration, state, test_loader, val=False):
     avg_perplexity = jnp.exp(avg_loss)
     avg_accuracy = jnp.mean(accs)
     if is_master_process:
-        if val:
+        if val == 0:
+            prefix = "train"
+        elif val == 1:
             prefix = "val"
-        else:
+        elif val == 2:
             prefix = "test"
+        else:
+            raise ValueError('val must be 0, 1, or 2')
+
+        if seq_len is not None:
+            prefix = prefix + f"/seq_len_{seq_len}"
 
         print(prefix+'/loss:', avg_loss)
         print(prefix + '/perplexity:', avg_perplexity)
@@ -258,6 +340,8 @@ def validate(iteration, state, test_loader, val=False):
         wandb.log({prefix+'/loss': avg_loss}, step=iteration)
         wandb.log({prefix+'/perplexity': avg_perplexity}, step=iteration)
         wandb.log({prefix + '/accuracy': avg_accuracy}, step=iteration)
+
+    return rngs, avg_loss, avg_perplexity, avg_accuracy
 
 
 if __name__ == '__main__':

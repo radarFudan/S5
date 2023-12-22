@@ -90,7 +90,7 @@ def create_wikitext_dataset(config: dict): # -> ReturnType:
 	dataset_obj = LMDataModuleWT103("wikitext",
 									"gpt2",
 									dataset_config_name="wikitext-103-raw-v1",
-									max_length=1024,
+									max_length=config.l_max,
                  	cache_dir=config.data_kwargs["data_dir"],
 									val_ratio=0.0005,
 									val_split_seed=2357,
@@ -100,14 +100,16 @@ def create_wikitext_dataset(config: dict): # -> ReturnType:
 									batch_size=config.data_kwargs["batch_size"],
 									batch_size_eval=config.data_kwargs["batch_size_eval"],
 									num_workers=config.data_kwargs["num_workers"],
-                 	shuffle=True,
+                 	shuffle=config.data_kwargs["shuffle"],
 									pin_memory=config.data_kwargs["pin_memory"],
 									drop_last=False,
 									fault_tolerant=False,
 									ddp=False,
                  	fast_forward_epochs=None,
 									fast_forward_batches=None,
-                 	use_shmem=True)
+                 	use_shmem=True,
+					consecutive_loader=config.data_kwargs["consecutive_loader"],
+					)
 	# dataset_obj.cache_dir = Path(cache_dir) / name
 	dataset_obj.setup()
 	trainloader = dataset_obj.train_dataloader()
