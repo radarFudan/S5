@@ -59,6 +59,17 @@ def main():
     inputs = jnp.array(batch[0].numpy())
     targets = jnp.array(batch[1].numpy())
 
+    num_devices = jax.local_device_count()
+    batch_size_per_device = inputs.shape[0]
+    if config.layer == "S5_operator":
+        zero_hiddens = jax.numpy.zeros((batch_size_per_device, config.n_layer, config.layer_kwargs["order"], 1, config.layer_kwargs["ssm_size"]))
+        zero_hiddens_init_model_state = jax.numpy.zeros((batch_size_per_device // num_devices, config.n_layer, config.layer_kwargs["order"], 1, config.layer_kwargs["ssm_size"]))
+    elif config.layer == "hyena":
+        zero_hiddens = jax.numpy.zeros((batch_size_per_device, config.n_layer, config.layer_kwargs["order"], 1, config.d_model, 1, 1))
+        zero_hiddens_init_model_state = None
+    else:
+        raise NotImplementedError(f"Hidden state initialization for {config.layer} not implemented")
+
     # Reshape to (num_devices, device_batch_size, seq_len, dim)
     num_devices = jax.local_device_count()
     inputs = reshape_batch_per_device(inputs, num_devices)
@@ -67,7 +78,7 @@ def main():
 
     batch = get_first_device(batch)
     model = get_model(config)
-    state, schedule_fn = init_model_state(init_rng, model, batch[0], config)
+    state, _, schedule_fn = init_model_state(init_rng, model, batch[0], zero_hiddens_init_model_state, config)
     if config.ckpt is not None:
         state = checkpoints.restore_checkpoint(osp.join(config.ckpt, 'checkpoints'), state)
         print('Restored from checkpoint')
@@ -86,33 +97,60 @@ def main():
 
     #     validate(iteration, state, test_loader)
 
+    # Consecutive evaluation
+    evaluation(config, rngs, iteration, state, consecutive_loader=True)
+    evaluation(config, rngs, iteration, state, consecutive_loader=False)
+
+
+def evaluation(config, rngs, iteration, state, consecutive_loader=True, evaluate_train=False):
+    config.data_kwargs["consecutive_loader"] = consecutive_loader
+    print("\nNow we are evaluating with consecutive loader:", consecutive_loader, "\n")
+
+    num_devices = jax.local_device_count()
+
     # Initialize a list to store validation losses
-    validation_losses = []
+    evaluation = []
 
     seq_len_list = [16 * 2 ** i for i in range(0,12)] # 16 to 32768
     for seq_len in seq_len_list:
         # Change the sequence length for evaluation
         # TODO, care about the out of memory issue. 
         config.l_max = seq_len
-        config.data_kwargs["batch_size"] = max(16 * 1024 // seq_len, num_devices)
-        config.data_kwargs["batch_size_eval"] = max(16 * 1024 // seq_len, num_devices)
+        config.data_kwargs["batch_size"] = max(int(16 * 2048 // seq_len), num_devices)
+        config.data_kwargs["batch_size_eval"] = max(int(16 * 2048 // seq_len), num_devices)
         
         train_loader, val_loader, test_loader = create_wikitext_dataset(config)
 
-        val_loss = validate(config, iteration, state, zero_hiddens, val_loader, rngs, val=1, seq_len=seq_len)
-        validation_losses.append((seq_len, 'val', val_loss))
+        batch = next(iter(train_loader))
+        inputs = jnp.array(batch[0].numpy())
+        targets = jnp.array(batch[1].numpy())
+        num_devices = jax.local_device_count()
+        batch_size_per_device = inputs.shape[0]
+        if config.layer == "S5_operator":
+            zero_hiddens = jax.numpy.zeros((batch_size_per_device, config.n_layer, config.layer_kwargs["order"], 1, config.layer_kwargs["ssm_size"]))
+            zero_hiddens_init_model_state = jax.numpy.zeros((batch_size_per_device // num_devices, config.n_layer, config.layer_kwargs["order"], 1, config.layer_kwargs["ssm_size"]))
+        elif config.layer == "hyena":
+            zero_hiddens = jax.numpy.zeros((batch_size_per_device, config.n_layer, config.layer_kwargs["order"], 1, config.d_model, 1, 1))
+            zero_hiddens_init_model_state = None
+        else:
+            raise NotImplementedError(f"Hidden state initialization for {config.layer} not implemented")
 
-        test_loss = validate(config, iteration, state, zero_hiddens, test_loader, rngs, val=2, seq_len=seq_len)
-        validation_losses.append((seq_len, 'test', test_loss))
+        rngs, avg_loss, avg_perplexity, avg_accuracy = validate(config, iteration, state, zero_hiddens, val_loader, rngs, val=1, seq_len=seq_len)
+        evaluation.append((seq_len, 'val', avg_loss, avg_perplexity, avg_accuracy))
 
-        train_loss = validate(config, iteration, state, zero_hiddens, train_loader, rngs, val=0, seq_len=seq_len)
-        validation_losses.append((seq_len, 'train', train_loss))
+        rngs, avg_loss, avg_perplexity, avg_accuracy = validate(config, iteration, state, zero_hiddens, test_loader, rngs, val=2, seq_len=seq_len)
+        evaluation.append((seq_len, 'test', avg_loss, avg_perplexity, avg_accuracy))
+
+        if evaluate_train:
+            rngs, avg_loss, avg_perplexity, avg_accuracy = validate(config, iteration, state, zero_hiddens, train_loader, rngs, val=0, seq_len=seq_len)
+            evaluation.append((seq_len, 'train', avg_loss, avg_perplexity, avg_accuracy))
 
     # Write the validation losses to a CSV file
-    with open('validation_losses.csv', 'w', newline='') as file:
+    with open(osp.join(config.output_dir, 'evaluation_consecutive{consecutive_loader}.csv'), 'w', newline='') as file:
         writer = csv.writer(file)
-        writer.writerow(['Validation sequence Length', 'Dataset Type', 'Loss'])
-        writer.writerows(validation_losses)
+        writer.writerow(['Validation sequence Length', 'Dataset Type', 'Loss', 'Perplexity', 'Accuracy'])
+        writer.writerows(evaluation)
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

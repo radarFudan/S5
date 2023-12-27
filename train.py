@@ -90,9 +90,10 @@ def main():
         iteration, state, rngs = train(config, iteration, log_metrics, state, zero_hiddens, train_loader,
                                        schedule_fn, rngs, ckpt_dir)
 
-        rngs = validate(config, iteration, state, zero_hiddens, val_loader, rngs, val=1)
-
-        rngs = validate(config, iteration, state, zero_hiddens, test_loader, rngs, val=2)
+        rngs, avg_loss, avg_perplexity, avg_accuracy = validate(config, iteration, state, zero_hiddens, val_loader, rngs, val=1)
+        print("For validation set", avg_loss, avg_perplexity, avg_accuracy)
+        rngs, avg_loss, avg_perplexity, avg_accuracy = validate(config, iteration, state, zero_hiddens, test_loader, rngs, val=2)
+        print("For test set", avg_loss, avg_perplexity, avg_accuracy)
 
 
 def train_step(config, batch, state, hiddens, rng, vocab_size):
@@ -348,7 +349,12 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('-o', '--output_dir', type=str, required=True)
     parser.add_argument('-c', '--config', type=str, required=True)
+    parser.add_argument('-l', '--train_length', type=int, required=False, default=2048)
     args = parser.parse_args()
+
+    # add the train_length to the end of the output_dir
+    args.output_dir = args.output_dir + f"_T{args.train_length}"
+    print("The training length is", args.train_length)
 
     args.run_id = args.output_dir
 
@@ -379,5 +385,12 @@ if __name__ == '__main__':
     config = args
 
     is_master_process = jax.process_index() == 0
+
+    # adjust the batch size if the training sequence length is changed 
+    config.data_kwargs["batch_size"] = config.l_max * config.data_kwargs["batch_size"] // config.train_length
+    config.data_kwargs["batch_size_eval"] = config.l_max * config.data_kwargs["batch_size_eval"] // config.train_length
+    assert config.data_kwargs["batch_size_eval"] > 0
+    assert config.data_kwargs["batch_size"] % jax.device_count() == 0, "Batch size must be divisible by the number of devices"
+    config.l_max = config.train_length
 
     main()

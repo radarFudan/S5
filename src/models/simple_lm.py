@@ -297,6 +297,8 @@ class LMBackbone(nn.Module):
         residual = (dropped + residual) if residual is not None else dropped
         preds = self.ln_f(residual)
 
+        # print("hiddens shape", hiddens.shape)
+        # print("new_hiddens element shape", new_hiddens[0].shape)
         new_hiddens = np.stack(new_hiddens, axis=1)
         # print("New hiddens stacked shape", new_hiddens.shape)
 

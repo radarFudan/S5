@@ -149,6 +149,13 @@ def get_optimizer(config, params):
 
 
 def init_model_state(rng_key, model, inputs, hiddens, config):
+    if config.layer_kwargs["hidden_state_method"] == "previous":
+        print("Using previous hidden state")
+    elif config.layer_kwargs["hidden_state_method"] == "zero":
+        print("Using zero init hidden state")
+    else:
+        raise NotImplementedError(f"Hidden state method {config.layer_kwargs['hidden_state_method']} not implemented")
+
     variables = model.init({k: rng_key for k in ['params', *config.rng_keys]}, inputs, hiddens, training=True
     ).unfreeze()
     params = variables.pop('params')

@@ -68,7 +68,7 @@ layer_kwargs:
         conj_sym: False
         clip_eigs: True
         activation: "gelu"
-    hidden_state_method: "zero"
+    hidden_state_method: "previous"
 
 seq_model_kwargs:
     max_position_embeddings: 0
