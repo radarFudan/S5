@@ -25,6 +25,7 @@ from train import train_step, train, eval_step, eval_step_synthetic, validate
 
 import csv
 
+
 def main():
     global model
     rng = random.PRNGKey(config.seed)
@@ -146,7 +147,7 @@ def evaluation(config, rngs, iteration, state, consecutive_loader=True, evaluate
             evaluation.append((seq_len, 'train', avg_loss, avg_perplexity, avg_accuracy))
 
     # Write the validation losses to a CSV file
-    with open(osp.join(config.output_dir, 'evaluation_consecutive{consecutive_loader}.csv'), 'w', newline='') as file:
+    with open(osp.join(config.output_dir, f'evaluation_consecutive{consecutive_loader}.csv'), 'w', newline='') as file:
         writer = csv.writer(file)
         writer.writerow(['Validation sequence Length', 'Dataset Type', 'Loss', 'Perplexity', 'Accuracy'])
         writer.writerows(evaluation)

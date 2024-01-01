@@ -226,6 +226,12 @@ def train(config, iteration, log_metrics, state, hiddens, train_loader, schedule
 
         iteration += 1
 
+    if is_master_process:
+        state_ = jax_utils.unreplicate(state)
+        save_path = checkpoints.save_checkpoint(ckpt_dir, state_, state_.step, keep=1)
+        print('Saved checkpoint to', save_path)
+        del state_  # Needed to prevent a memory leak bug
+
     return iteration, state, rngs
 
 

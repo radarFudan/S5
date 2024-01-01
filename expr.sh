@@ -25,6 +25,7 @@ WANDB_MODE=offline XLA_PYTHON_CLIENT_MEM_FRACTION=.60 CUDA_VISIBLE_DEVICES=3 pyt
 # Difficulty: It's hard to inherit the speed performance from mamba. 
 
 # Debug the batch training over different training length
+# expr1
 for index in {4..15}
 do
   length=$((2**index))  # Calculate 2 to the power of index
@@ -32,6 +33,7 @@ do
   XLA_PYTHON_CLIENT_MEM_FRACTION=.80 CUDA_VISIBLE_DEVICES=2 python train.py -o Hyena_S5_zero -c configs/hyena_S5/wikitext_S5_v5.yaml --train_length $length
 done
 
+# expr2
 for index in {4..15}
 do
   length=$((2**index))  # Calculate 2 to the power of index
