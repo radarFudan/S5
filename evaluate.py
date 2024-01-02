@@ -68,6 +68,11 @@ def main():
     elif config.layer == "hyena":
         zero_hiddens = jax.numpy.zeros((batch_size_per_device, config.n_layer, config.layer_kwargs["order"], 1, config.d_model, 1, 1))
         zero_hiddens_init_model_state = None
+    elif config.layer == "Mamba_operator": # B * layers * 1 (time) * d_inner * d_state
+        config.layer_kwargs["d_inner"] = config.d_model * config.layer_kwargs["expand"]
+
+        zero_hiddens = jax.numpy.zeros((batch_size_per_device, config.n_layer, 1, config.layer_kwargs["d_inner"], config.layer_kwargs["d_state"]))
+        zero_hiddens_init_model_state = jax.numpy.zeros((batch_size_per_device // num_devices, config.n_layer, 1, config.layer_kwargs["d_inner"], config.layer_kwargs["d_state"]))
     else:
         raise NotImplementedError(f"Hidden state initialization for {config.layer} not implemented")
 
@@ -133,6 +138,11 @@ def evaluation(config, rngs, iteration, state, consecutive_loader=True, evaluate
         elif config.layer == "hyena":
             zero_hiddens = jax.numpy.zeros((batch_size_per_device, config.n_layer, config.layer_kwargs["order"], 1, config.d_model, 1, 1))
             zero_hiddens_init_model_state = None
+        elif config.layer == "Mamba_operator": # B * layers * 1 (time) * d_inner * d_state
+            config.layer_kwargs["d_inner"] = config.d_model * config.layer_kwargs["expand"]
+
+            zero_hiddens = jax.numpy.zeros((batch_size_per_device, config.n_layer, 1, config.layer_kwargs["d_inner"], config.layer_kwargs["d_state"]))
+            zero_hiddens_init_model_state = jax.numpy.zeros((batch_size_per_device // num_devices, config.n_layer, 1, config.layer_kwargs["d_inner"], config.layer_kwargs["d_state"]))
         else:
             raise NotImplementedError(f"Hidden state initialization for {config.layer} not implemented")
 

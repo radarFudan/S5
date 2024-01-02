@@ -40,3 +40,13 @@ do
   echo "The training sequence length is" $length
   XLA_PYTHON_CLIENT_MEM_FRACTION=.80 CUDA_VISIBLE_DEVICES=3 python train.py -o Hyena_S5_previous -c configs/hyena_S5/wikitext_S5_v6.yaml --train_length $length
 done
+
+
+# expr1_mamba
+# for index in {4..15}
+for index in {4..4}
+do
+  length=$((2**index))  # Calculate 2 to the power of index
+  echo "The training sequence length is" $length
+  XLA_PYTHON_CLIENT_MEM_FRACTION=.80 CUDA_VISIBLE_DEVICES=0 python train.py -o Hyena_Mamba_zero -c configs/hyena_S5/wikitext_Mamba_v5.yaml --train_length $length
+done

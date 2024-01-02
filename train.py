@@ -58,12 +58,17 @@ def main():
 
     num_devices = jax.local_device_count()
     batch_size_per_device = inputs.shape[0]
-    if config.layer == "S5_operator":
+    if config.layer == "S5_operator": # B * layers * order * 1 (time) * ssm_size
         zero_hiddens = jax.numpy.zeros((batch_size_per_device, config.n_layer, config.layer_kwargs["order"], 1, config.layer_kwargs["ssm_size"]))
         zero_hiddens_init_model_state = jax.numpy.zeros((batch_size_per_device // num_devices, config.n_layer, config.layer_kwargs["order"], 1, config.layer_kwargs["ssm_size"]))
     elif config.layer == "hyena":
         zero_hiddens = jax.numpy.zeros((batch_size_per_device, config.n_layer, config.layer_kwargs["order"], 1, config.d_model, 1, 1))
         zero_hiddens_init_model_state = None
+    elif config.layer == "Mamba_operator": # B * layers * 1 (time) * d_inner * d_state
+        config.layer_kwargs["d_inner"] = config.d_model * config.layer_kwargs["expand"]
+
+        zero_hiddens = jax.numpy.zeros((batch_size_per_device, config.n_layer, 1, config.layer_kwargs["d_inner"], config.layer_kwargs["d_state"]))
+        zero_hiddens_init_model_state = jax.numpy.zeros((batch_size_per_device // num_devices, config.n_layer, 1, config.layer_kwargs["d_inner"], config.layer_kwargs["d_state"]))
     else:
         raise NotImplementedError(f"Hidden state initialization for {config.layer} not implemented")
 
@@ -192,6 +197,9 @@ def train(config, iteration, log_metrics, state, hiddens, train_loader, schedule
         elif config.layer == "hyena":
             if len(hiddens.shape) > 8:
                 hiddens = jax.numpy.squeeze(hiddens, axis=-8)
+        elif config.layer == "Mamba_operator":
+            if len(hiddens.shape) > 6:
+                hiddens = jax.numpy.squeeze(hiddens, axis=-6)
         else:
             raise NotImplementedError(f"Hidden state initialization for {config.layer} not implemented")
 
@@ -317,6 +325,9 @@ def validate(config, iteration, state, hiddens, test_loader, rngs, val=0, seq_le
         elif config.layer == "hyena":
             if len(hiddens.shape) > 8:
                 hiddens = jax.numpy.squeeze(hiddens, axis=-8)
+        elif config.layer == "Mamba_operator":
+            if len(hiddens.shape) > 6:
+                hiddens = jax.numpy.squeeze(hiddens, axis=-6)
         else:
             raise NotImplementedError(f"Hidden state initialization for {config.layer} not implemented")
 

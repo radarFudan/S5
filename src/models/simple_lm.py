@@ -6,6 +6,7 @@ import math
 
 from .S5 import S5Operator
 from .hyena import HyenaOperator
+from .mamba import MambaOperator
 from .utils import StochasticDepth, Identity
 from collections import namedtuple
 
@@ -212,6 +213,11 @@ def create_mixer_cls(layer=None, d_model=None, n_layer=None, l_max=None, layer_k
         elif layer == "S5_operator":
             mixer_cls = S5Operator(d_model, n_layer, l_max, **layer_kwargs)
 
+        elif layer == "Mamba_operator":
+            mixer_cls = MambaOperator(d_model, n_layer, l_max, **layer_kwargs)
+
+        else:
+            raise NotImplementedError(f"Layer {layer} not implemented")
     return mixer_cls
 
 
