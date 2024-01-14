@@ -15,6 +15,6 @@
     **TODO** Write the hidden state update formula first, both the discrete and continuous time version
     Based on [Mamba-minimal](https://github.com/johnma2006/mamba-minimal)
 
-6. Explore the context extension performance from previous hidden states
+6. Explore the context extension performance from previous hidden states, done, it is monotonic
 
-7. 
+7. Evaluate the hidden state and per token perplexity of the validation and test dataset. 
