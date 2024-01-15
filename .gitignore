@@ -168,3 +168,4 @@ raw_datasets/
 token*
 logs*
 *.sh
+TinyLlama

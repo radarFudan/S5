@@ -21,6 +21,9 @@ from train_utils import init_model_state, \
         get_first_device, ProgressMeter, seed_all, reshape_batch_per_device
 from src.models import get_model
 
+import glob
+from pathlib import Path
+from mix_data import get_default_supported_precision, create_dataloaders
 
 def main():
     global model
@@ -48,13 +51,43 @@ def main():
         train_loader, val_loader, test_loader = create_wikitext_dataset(config)
     elif config.dataset in ["icl_synthetics"]:
         train_loader, val_loader, test_loader = create_icl_datasets(config)
+    elif config.dataset in ["mix"]:
+        import lightning as L
+
+        strategy="auto"
+        tpu=False
+        precision = None or get_default_supported_precision(training=True, tpu=tpu)
+
+        fabric = L.Fabric(devices=1, strategy=strategy, precision=precision, loggers=[])
+        data_dir = Path("/home/aiops/wangsd/TinyLlama/data/mix_sample_combined_EleutherAI")
+
+        train_loader, val_loader, test_loader = create_dataloaders(
+            batch_size=config.data_kwargs["batch_size"],
+            block_size=config.l_max,
+            fabric=fabric,
+            train_data_dir=Path(data_dir),
+            val_data_dir=Path(data_dir),
+            seed=3412,
+        )
     else:
         raise NotImplementedError("Dataset not implemented")
     log_metrics = ['loss', 'accuracy']
 
-    batch = next(iter(train_loader))
-    inputs = jnp.array(batch[0].numpy())
-    targets = jnp.array(batch[1].numpy())
+    print("data_loader is", train_loader)
+    # print("iter(train_loader) is", iter(train_loader))
+    # batch = next(iter(train_loader))
+    # batch = train_loader[0]
+    # print("batch is of shape", batch[0].shape)
+    # inputs = jnp.array(batch[:,:-1].numpy())
+    # targets = jnp.array(batch[:,1:].numpy())
+    for batch_index, batch in enumerate(train_loader):
+        print("batch is of shape", batch[0].shape)
+        inputs = jnp.array(batch[:,:-1].numpy())
+        targets = jnp.array(batch[:,1:].numpy())
+        if batch_index == 0:
+            break
+    print("inputs", inputs)
+    print("targets", targets)
 
     num_devices = jax.local_device_count()
     batch_size_per_device = inputs.shape[0]
@@ -179,8 +212,10 @@ def train(config, iteration, log_metrics, state, hiddens, train_loader, schedule
 
     end = time.time()
     for batch in train_loader:
-        inputs = jnp.array(batch[0].numpy())
-        targets = jnp.array(batch[1].numpy())
+        # inputs = jnp.array(batch[0].numpy())
+        # targets = jnp.array(batch[1].numpy())
+        inputs = jnp.array(batch[:,:-1].numpy())
+        targets = jnp.array(batch[:,1:].numpy())
 
         # Reshape to (num_devices, device_batch_size, seq_len, dim)
         inputs = reshape_batch_per_device(inputs, num_devices)
@@ -308,8 +343,11 @@ def validate(config, iteration, state, hiddens, test_loader, rngs, val=0, seq_le
         raise NotImplementedError("Dataset not implemented")
 
     for batch in test_loader:
-        inputs = jnp.array(batch[0].numpy())
-        targets = jnp.array(batch[1].numpy())
+        # inputs = jnp.array(batch[0].numpy())
+        # targets = jnp.array(batch[1].numpy())
+        inputs = jnp.array(batch[:,:-1].numpy())
+        targets = jnp.array(batch[:,1:].numpy())
+        
         if inputs.shape[0] < config.data_kwargs["batch_size_eval"]:
             continue # TODO, for correctness purpose need to modify the evaluation. 
 

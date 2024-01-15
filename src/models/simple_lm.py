@@ -47,6 +47,7 @@ class GPT2Embeddings(nn.Module):
             input_ids: (batch, seqlen)
             position_ids: (batch, seqlen)
         """
+        assert len(input_ids.shape) == 2, f"input_ids shape is {input_ids.shape}"
         batch_size, seqlen = input_ids.shape
         embeddings = self.word_embeddings(input_ids)
 

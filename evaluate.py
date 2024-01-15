@@ -25,6 +25,10 @@ from train import train_step, train, eval_step, eval_step_synthetic, validate
 
 import csv
 
+import glob
+from pathlib import Path
+from mix_data import get_default_supported_precision, create_dataloaders
+
 
 def main():
     global model
@@ -51,7 +55,25 @@ def main():
     if config.dataset in ["wikitext103"]:
         train_loader, val_loader, test_loader = create_wikitext_dataset(config)
     elif config.dataset in ["icl_synthetics"]:
-        train_loader, val_loader, test_loader = create_icl_datasets(config)
+        train_loader, val_loader, test_loader = create_icl_datasets(config)    
+    elif config.dataset in ["mix"]:
+        import lightning as L
+
+        strategy="auto"
+        tpu=False
+        precision = None or get_default_supported_precision(training=True, tpu=tpu)
+
+        fabric = L.Fabric(devices=1, strategy=strategy, precision=precision, loggers=[])
+        data_dir = Path("/home/aiops/wangsd/TinyLlama/data/mix_sample_combined_EleutherAI")
+
+        train_loader, val_loader, test_loader = create_dataloaders(
+            batch_size=config.data_kwargs["batch_size"],
+            block_size=config.l_max,
+            fabric=fabric,
+            train_data_dir=Path(data_dir),
+            val_data_dir=Path(data_dir),
+            seed=3412,
+        )
     else:
         raise NotImplementedError("Dataset not implemented")
     log_metrics = ['loss', 'accuracy']
