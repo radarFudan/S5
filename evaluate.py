@@ -79,8 +79,10 @@ def main():
     log_metrics = ['loss', 'accuracy']
 
     batch = next(iter(train_loader))
-    inputs = jnp.array(batch[0].numpy())
-    targets = jnp.array(batch[1].numpy())
+    # inputs = jnp.array(batch[0].numpy())
+    # targets = jnp.array(batch[1].numpy())
+    inputs = jnp.array(batch[:,:-1].numpy())
+    targets = jnp.array(batch[:,1:].numpy())
 
     num_devices = jax.local_device_count()
     batch_size_per_device = inputs.shape[0]
@@ -150,8 +152,11 @@ def evaluation(config, rngs, iteration, state, consecutive_loader=True, evaluate
         train_loader, val_loader, test_loader = create_wikitext_dataset(config)
 
         batch = next(iter(train_loader))
-        inputs = jnp.array(batch[0].numpy())
-        targets = jnp.array(batch[1].numpy())
+        # inputs = jnp.array(batch[0].numpy())
+        # targets = jnp.array(batch[1].numpy())
+        inputs = jnp.array(batch[:,:-1].numpy())
+        targets = jnp.array(batch[:,1:].numpy())
+
         num_devices = jax.local_device_count()
         batch_size_per_device = inputs.shape[0]
         if config.layer == "S5_operator":

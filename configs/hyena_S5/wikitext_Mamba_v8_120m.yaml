@@ -1,7 +1,7 @@
 seed: 0
 
 # Wandb
-project: icml_Mamba_120M_previous_full_mix
+project: icml_Mamba_120M_previous_full_mix_V1
 entity: # todo
 
 # Training

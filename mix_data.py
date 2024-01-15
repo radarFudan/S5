@@ -32,6 +32,8 @@ def get_default_supported_precision(training: bool, tpu: bool = False) -> str:
     Returns:
         default precision that is suitable for the task and is supported by the hardware
     """
+    return "32-true"
+
     if tpu:
         return "32-true"
     if not torch.cuda.is_available() or torch.cuda.is_bf16_supported():
