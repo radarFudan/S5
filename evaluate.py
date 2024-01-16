@@ -73,6 +73,9 @@ def main():
 
         zero_hiddens = jax.numpy.zeros((batch_size_per_device, config.n_layer, 1, config.layer_kwargs["d_inner"], config.layer_kwargs["d_state"]))
         zero_hiddens_init_model_state = jax.numpy.zeros((batch_size_per_device // num_devices, config.n_layer, 1, config.layer_kwargs["d_inner"], config.layer_kwargs["d_state"]))
+    elif config.layer == "LSTM_operator": # B * layers * 1 (time) * d_model
+        zero_hiddens = jax.numpy.zeros((batch_size_per_device, config.n_layer, config.d_model, 2))
+        zero_hiddens_init_model_state = jax.numpy.zeros((batch_size_per_device // num_devices, config.n_layer, config.d_model, 2))
     else:
         raise NotImplementedError(f"Hidden state initialization for {config.layer} not implemented")
 
@@ -143,6 +146,9 @@ def evaluation(config, rngs, iteration, state, consecutive_loader=True, evaluate
 
             zero_hiddens = jax.numpy.zeros((batch_size_per_device, config.n_layer, 1, config.layer_kwargs["d_inner"], config.layer_kwargs["d_state"]))
             zero_hiddens_init_model_state = jax.numpy.zeros((batch_size_per_device // num_devices, config.n_layer, 1, config.layer_kwargs["d_inner"], config.layer_kwargs["d_state"]))
+        elif config.layer == "LSTM_operator": # B * layers * 1 (time) * d_model
+            zero_hiddens = jax.numpy.zeros((batch_size_per_device, config.n_layer, config.d_model, 2))
+            zero_hiddens_init_model_state = jax.numpy.zeros((batch_size_per_device // num_devices, config.n_layer, config.d_model, 2))
         else:
             raise NotImplementedError(f"Hidden state initialization for {config.layer} not implemented")
 

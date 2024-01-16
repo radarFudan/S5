@@ -169,6 +169,32 @@ def get_optimizer(config, params):
 
         return tx, learning_rate_fn
 
+    elif config.layer == "LSTM_operator":
+
+        ssm_lrs = ["A_log", "x_proj", "dt_proj", "out_proj"]
+        ssm_fn = map_nested_fn(
+            lambda k, _: "ssm"
+            if k in ssm_lrs
+            else "regular"
+        )
+
+        learning_rate_fn = get_learning_rate_fn(config, config.lr)
+        tx = optax.multi_transform(
+            {
+                "ssm": optax.adamw(learning_rate=get_learning_rate_fn(config, config.implicit_filter_lr),
+                                                    b1=0.9, b2=0.999,
+                                                    weight_decay=config.implicit_filter_weight_decay),
+                "regular": optax.adamw(learning_rate=learning_rate_fn, b1=0.9, b2=0.999,
+                                                weight_decay=config.weight_decay),
+            },
+            ssm_fn,
+        )
+
+        return tx, learning_rate_fn
+
+    else: 
+        raise NotImplementedError(f"Layer {config.layer} not implemented")
+
 
 
 def init_model_state(rng_key, model, inputs, hiddens, config):

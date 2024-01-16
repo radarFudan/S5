@@ -7,6 +7,7 @@ import math
 from .S5 import S5Operator
 from .hyena import HyenaOperator
 from .mamba import MambaOperator
+from .lstm import LSTM_Operator
 from .utils import StochasticDepth, Identity
 from collections import namedtuple
 
@@ -216,6 +217,8 @@ def create_mixer_cls(layer=None, d_model=None, n_layer=None, l_max=None, layer_k
         elif layer == "Mamba_operator":
             mixer_cls = MambaOperator(d_model, n_layer, l_max, **layer_kwargs)
 
+        elif layer == "LSTM_operator":
+            mixer_cls = LSTM_Operator(d_model, n_layer, l_max, **layer_kwargs)
         else:
             raise NotImplementedError(f"Layer {layer} not implemented")
     return mixer_cls
@@ -294,9 +297,10 @@ class LMBackbone(nn.Module):
             # print("residaul is ", residual)
             if layer_index < 1:
                 assert preds is not None
-                assert hiddens[:,layer_index, :, :, :] is not None
-                # print("preds.shape", preds.shape, "\nhiddens at layer shape", hiddens[:,layer_index, :, :, :].shape)
-            preds, residual, new_hidden = layer(preds, hiddens[:, layer_index, :, :, :], training, residual, layer_index=layer_index)
+                assert len(hiddens.shape) == 4, "hiddens shape is {}".format(hiddens.shape)
+                assert hiddens[:,layer_index, :, :] is not None
+                # print("preds.shape", preds.shape, "\nhiddens at layer shape", hiddens[:,layer_index, :, :].shape)
+            preds, residual, new_hidden = layer(preds, hiddens[:, layer_index, :, :], training, residual, layer_index=layer_index)
             new_hiddens.append(new_hidden)
 
         dropped = self.drop_f(deterministic=not training)(preds)
