@@ -64,7 +64,8 @@ def main():
         precision = None or get_default_supported_precision(training=True, tpu=tpu)
 
         fabric = L.Fabric(devices=1, strategy=strategy, precision=precision, loggers=[])
-        data_dir = Path("/home/aiops/wangsd/TinyLlama/data/mix_sample_combined_EleutherAI")
+        # data_dir = Path("/home/aiops/wangsd/TinyLlama/data/mix_sample_combined_EleutherAI")
+        data_dir = Path("/home/aiops/wangsd/TinyLlama/data/the_pile_deduplicated_EleutherAI_combined")
 
         train_loader, val_loader, test_loader = create_dataloaders(
             batch_size=config.data_kwargs["batch_size"],
@@ -149,7 +150,24 @@ def evaluation(config, rngs, iteration, state, consecutive_loader=True, evaluate
         config.data_kwargs["batch_size"] = max(int(16 * 2048 // seq_len), num_devices)
         config.data_kwargs["batch_size_eval"] = max(int(16 * 2048 // seq_len), num_devices)
         
-        train_loader, val_loader, test_loader = create_wikitext_dataset(config)
+        import lightning as L
+
+        strategy="auto"
+        tpu=False
+        precision = None or get_default_supported_precision(training=True, tpu=tpu)
+
+        fabric = L.Fabric(devices=1, strategy=strategy, precision=precision, loggers=[])
+        data_dir = Path("/home/aiops/wangsd/TinyLlama/data/mix_sample_combined_EleutherAI")
+
+        # train_loader, val_loader, test_loader = create_wikitext_dataset(config)
+        train_loader, val_loader, test_loader = create_dataloaders(
+            batch_size=config.data_kwargs["batch_size"],
+            block_size=config.l_max,
+            fabric=fabric,
+            train_data_dir=Path(data_dir),
+            val_data_dir=Path(data_dir),
+            seed=3412,
+        )
 
         batch = next(iter(train_loader))
         # inputs = jnp.array(batch[0].numpy())

@@ -59,7 +59,8 @@ def main():
         precision = None or get_default_supported_precision(training=True, tpu=tpu)
 
         fabric = L.Fabric(devices=1, strategy=strategy, precision=precision, loggers=[])
-        data_dir = Path("/home/aiops/wangsd/TinyLlama/data/mix_sample_combined_EleutherAI")
+        # data_dir = Path("/home/aiops/wangsd/TinyLlama/data/mix_sample_combined_EleutherAI")
+        data_dir = Path("/home/aiops/wangsd/TinyLlama/data/the_pile_deduplicated_EleutherAI_combined")
 
         train_loader, val_loader, test_loader = create_dataloaders(
             batch_size=config.data_kwargs["batch_size"],
@@ -124,9 +125,10 @@ def main():
     ckpt_dir = osp.join(config.output_dir, 'checkpoints')
 
     rngs = random.split(rng, jax.local_device_count())
+    # with jax.disable_jit():
     while iteration <= config.total_steps:
         iteration, state, rngs = train(config, iteration, log_metrics, state, zero_hiddens, train_loader,
-                                       schedule_fn, rngs, ckpt_dir)
+                                    schedule_fn, rngs, ckpt_dir)
 
         rngs, avg_loss, avg_perplexity, avg_accuracy = validate(config, iteration, state, zero_hiddens, val_loader, rngs, val=1)
         print("For validation set", avg_loss, avg_perplexity, avg_accuracy)
