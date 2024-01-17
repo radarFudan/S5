@@ -334,8 +334,11 @@ def validate(config, iteration, state, hiddens, test_loader, rngs, val=0, seq_le
         elif config.layer == "Mamba_operator":
             if len(hiddens.shape) > 6:
                 hiddens = jax.numpy.squeeze(hiddens, axis=-6)
+        elif config.layer == "LSTM_operator":
+            if len(hiddens.shape) > 5:
+                hiddens = jax.numpy.squeeze(hiddens, axis=-5)
         else:
-            raise NotImplementedError(f"Hidden state initialization for {config.layer} not implemented")
+            raise NotImplementedError(f"Hidden state shape modification for {config.layer} not implemented")
 
         return_loss, return_acc, hiddens, rngs = p_eval_step(batch=batch, state=state, hiddens=hiddens, rng=rngs)
         losses = jnp.append(losses, return_loss)

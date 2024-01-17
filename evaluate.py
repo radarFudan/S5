@@ -162,11 +162,11 @@ def evaluation(config, rngs, iteration, state, consecutive_loader=True, evaluate
             rngs, avg_loss, avg_perplexity, avg_accuracy = validate(config, iteration, state, zero_hiddens, train_loader, rngs, val=0, seq_len=seq_len)
             evaluation.append((seq_len, 'train', avg_loss, avg_perplexity, avg_accuracy))
 
-    # Write the validation losses to a CSV file
-    with open(osp.join(config.output_dir, f'evaluation_consecutive{consecutive_loader}.csv'), 'w', newline='') as file:
-        writer = csv.writer(file)
-        writer.writerow(['Validation sequence Length', 'Dataset Type', 'Loss', 'Perplexity', 'Accuracy'])
-        writer.writerows(evaluation)
+        # Write the validation losses to a CSV file
+        with open(osp.join(config.output_dir, f'evaluation_consecutive{consecutive_loader}.csv'), 'w', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow(['Validation sequence Length', 'Dataset Type', 'Loss', 'Perplexity', 'Accuracy'])
+            writer.writerows(evaluation)
 
 
 if __name__ == '__main__':
