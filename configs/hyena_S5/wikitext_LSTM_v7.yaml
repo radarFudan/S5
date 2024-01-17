@@ -1,7 +1,7 @@
 seed: 0
 
 # Wandb
-project: icml_LSTM_30M_zero_full
+project: icml_LSTM_30M_zero_full_silicon
 entity: # todo
 
 # Training
@@ -27,10 +27,8 @@ vocab_size: 50257
 l_max: 2048
 
 data_kwargs:
-    # batch_size: 16
-    # batch_size_eval: 16
-    batch_size: 4
-    batch_size_eval: 4
+    batch_size: 16
+    batch_size_eval: 16
     num_workers: 4
     pin_memory: False
     data_dir: ./

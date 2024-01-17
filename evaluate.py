@@ -125,8 +125,11 @@ def evaluation(config, rngs, iteration, state, consecutive_loader=True, evaluate
         # Change the sequence length for evaluation
         # TODO, care about the out of memory issue. 
         config.l_max = seq_len
-        config.data_kwargs["batch_size"] = max(int(16 * 2048 // seq_len), num_devices)
-        config.data_kwargs["batch_size_eval"] = max(int(16 * 2048 // seq_len), num_devices)
+
+        # config.data_kwargs["batch_size"] = max(int(16 * 2048 // seq_len), num_devices)
+        # config.data_kwargs["batch_size_eval"] = max(int(16 * 2048 // seq_len), num_devices)
+        config.data_kwargs["batch_size"] = num_devices
+        config.data_kwargs["batch_size_eval"] = num_devices
         
         train_loader, val_loader, test_loader = create_wikitext_dataset(config)
 
