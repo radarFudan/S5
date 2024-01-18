@@ -72,6 +72,9 @@ def main():
     elif config.layer == "LSTM_operator": # B * layers * 1 (time) * d_model
         zero_hiddens = jax.numpy.zeros((batch_size_per_device, config.n_layer, config.d_model, 2))
         zero_hiddens_init_model_state = jax.numpy.zeros((batch_size_per_device // num_devices, config.n_layer, config.d_model, 2))
+    elif config.layer == "GRU_operator": # B * layers * 1 (time) * d_model
+        zero_hiddens = jax.numpy.zeros((batch_size_per_device, config.n_layer, config.d_model, 2))
+        zero_hiddens_init_model_state = jax.numpy.zeros((batch_size_per_device // num_devices, config.n_layer, config.d_model, 2))
     else:
         raise NotImplementedError(f"Hidden state initialization for {config.layer} not implemented")
 
@@ -206,6 +209,9 @@ def train(config, iteration, log_metrics, state, hiddens, train_loader, schedule
         elif config.layer == "LSTM_operator":
             if len(hiddens.shape) > 5:
                 hiddens = jax.numpy.squeeze(hiddens, axis=-5)
+        elif config.layer == "GRU_operator":
+            if len(hiddens.shape) > 4:
+                hiddens = jax.numpy.squeeze(hiddens, axis=-4)
         else:
             raise NotImplementedError(f"Hidden state initialization for {config.layer} not implemented")
 
@@ -337,6 +343,9 @@ def validate(config, iteration, state, hiddens, test_loader, rngs, val=0, seq_le
         elif config.layer == "LSTM_operator":
             if len(hiddens.shape) > 5:
                 hiddens = jax.numpy.squeeze(hiddens, axis=-5)
+        elif config.layer == "GRU_operator":
+            if len(hiddens.shape) > 4:
+                hiddens = jax.numpy.squeeze(hiddens, axis=-4)
         else:
             raise NotImplementedError(f"Hidden state shape modification for {config.layer} not implemented")
 

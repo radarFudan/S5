@@ -358,20 +358,15 @@ class GRU_Operator(nn.Module):
     def __call__(self, x, carry, training=None, layer_index=None):
         if self.hidden_state_method == "previous":
             assert carry is not None
-            # carry = np.squeeze(carry, axis=1)
-            assert len(carry.shape) == 3, f"len(carry.shape)={len(carry.shape)} != 3, carry.shape={carry.shape}"
         elif self.hidden_state_method == "zero":
-            carry = self.layer.initialize_carry(jax.random.key(1), x[:,0,:].shape) # make it zero
-            carry = np.stack(carry, axis=-1) # B * D * 2
-            # print("In LSTM_Operator, this should be zero carry", carry)
+            carry = self.layer.initialize_carry(jax.random.key(1), x[:,0,:].shape) # make it zero, B * D
+            print("In GRU_Operator, this should be zero carry", carry)
         else:
             raise NotImplementedError(f"hidden_state_method {self.hidden_state_method} not implemented")
 
         T = x.shape[-2]
 
-        assert len(carry.shape) == 3, f"len(carry.shape)={len(carry.shape)} != 3"
-        # print("carry[0].shape is", carry[0].shape)
-        carry = (carry[:,:,0], carry[:,:,1])
+        assert len(carry.shape) == 2, f"len(carry.shape)={len(carry.shape)} != 2, carry.shape={carry.shape}"
 
         # TODO, maybe convert into scan a bit later
         out_list = []
@@ -381,8 +376,6 @@ class GRU_Operator(nn.Module):
         out_list = np.stack(out_list, axis=-2) # B * T * D
         assert len(out_list.shape) == 3, f"len(out_list.shape)={len(out_list.shape)} != 3"
         assert out_list.shape == x.shape, f"out_list.shape={out_list.shape} != x.shape={x.shape}"
-
-        new_carry = np.stack(new_carry, axis=-1) # B * D * 2
 
         if self.return_state:
             return out_list, new_carry
