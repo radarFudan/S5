@@ -51,7 +51,7 @@ def main():
         train_loader, val_loader, test_loader = create_wikitext_dataset(config)
     elif config.dataset in ["icl_synthetics"]:
         train_loader, val_loader, test_loader = create_icl_datasets(config)
-    elif config.dataset in ["mix"]:
+    elif config.dataset in ["pile"]:
         import lightning as L
 
         strategy="auto"
@@ -59,7 +59,8 @@ def main():
         precision = None or get_default_supported_precision(training=True, tpu=tpu)
 
         fabric = L.Fabric(devices=1, strategy=strategy, precision=precision, loggers=[])
-        data_dir = Path("/home/aiops/wangsd/TinyLlama/data/mix_sample_combined_EleutherAI")
+        # data_dir = Path("/home/aiops/wangsd/TinyLlama/data/mix_sample_combined_EleutherAI")
+        data_dir = Path("/home/aiops/wangsd/TinyLlama/data/the_pile_deduplicated_EleutherAI_combined")
 
         train_loader, val_loader, test_loader = create_dataloaders(
             batch_size=config.data_kwargs["batch_size"],
@@ -73,19 +74,9 @@ def main():
         raise NotImplementedError("Dataset not implemented")
     log_metrics = ['loss', 'accuracy']
 
-    print("data_loader is", train_loader)
-    # print("iter(train_loader) is", iter(train_loader))
-    # batch = next(iter(train_loader))
-    # batch = train_loader[0]
-    # print("batch is of shape", batch[0].shape)
-    # inputs = jnp.array(batch[:,:-1].numpy())
-    # targets = jnp.array(batch[:,1:].numpy())
-    for batch_index, batch in enumerate(train_loader):
-        print("batch is of shape", batch[0].shape)
-        inputs = jnp.array(batch[:,:-1].numpy())
-        targets = jnp.array(batch[:,1:].numpy())
-        if batch_index == 0:
-            break
+    batch = next(iter(train_loader))
+    inputs = jnp.array(batch[:,:-1].numpy())
+    targets = jnp.array(batch[:,1:].numpy())
     print("inputs", inputs)
     print("targets", targets)
 
@@ -123,15 +114,37 @@ def main():
 
     ckpt_dir = osp.join(config.output_dir, 'checkpoints')
 
+
+
+    # with jax.disable_jit():
+    start_time = time.time()
+    p_train_step = jax.pmap(partial(train_step, config=config, vocab_size=config.vocab_size), axis_name='batch')
+    end_time = time.time()
+    train_step_execution_time = end_time - start_time
+    print("The train step pmap construction time is", train_step_execution_time)
+
+    if config.dataset in ["wikitext103", "pile"]:        
+        start_time = time.time()
+        p_eval_step = jax.pmap(partial(eval_step, config=config, vocab_size=config.vocab_size), axis_name='batch')
+        end_time = time.time()
+        eval_step_execution_time = end_time - start_time
+        print("The eval step pmap time construction is", eval_step_execution_time)
+
+    elif config.dataset in ["icl_synthetics"]:
+        pass
+    else:
+        raise NotImplementedError("Dataset not implemented")
+
     rngs = random.split(rng, jax.local_device_count())
+
     while iteration <= config.total_steps:
         iteration, state, rngs = train(config, iteration, log_metrics, state, zero_hiddens, train_loader,
-                                       schedule_fn, rngs, ckpt_dir)
+                                    schedule_fn, rngs, ckpt_dir, p_train_step=p_train_step)
 
         rngs, avg_loss, avg_perplexity, avg_accuracy = validate(config, iteration, state, zero_hiddens, val_loader, rngs, val=1)
-        print("For validation set", avg_loss, avg_perplexity, avg_accuracy)
+        print("For validation set", avg_loss, avg_perplexity, avg_accuracy, p_eval_step=p_eval_step)
         rngs, avg_loss, avg_perplexity, avg_accuracy = validate(config, iteration, state, zero_hiddens, test_loader, rngs, val=2)
-        print("For test set", avg_loss, avg_perplexity, avg_accuracy)
+        print("For test set", avg_loss, avg_perplexity, avg_accuracy, p_eval_step=p_eval_step)
 
 
 def train_step(config, batch, state, hiddens, rng, vocab_size):
@@ -181,15 +194,16 @@ def train_step(config, batch, state, hiddens, rng, vocab_size):
         grad_over_weight = jnp.abs(x) / (jnp.abs(y) + epsilon)
         return grad_over_weight.min()
     
-    g_norms = jax.tree_map(norm, grads)
-    gow_maxs = jax.tree_map(grad_over_weight_max, grads, state.params)
-    gow_mins = jax.tree_map(grad_over_weight_min, grads, state.params)
+    # g_norms = jax.tree_map(norm, grads)
+    # gow_maxs = jax.tree_map(grad_over_weight_max, grads, state.params)
+    # gow_mins = jax.tree_map(grad_over_weight_min, grads, state.params)
 
     new_state = state.apply_gradients(
         grads=grads,
     )
 
-    return new_state, hiddens, out_dict, new_rng, g_norms, gow_maxs, gow_mins
+    # return new_state, hiddens, out_dict, new_rng, g_norms, gow_maxs, gow_mins
+    return new_state, hiddens, out_dict, new_rng, None, None, None
 
 
 def flatten_tree_with_names(tree):
@@ -202,14 +216,12 @@ def flatten_tree_with_names(tree):
     return flat_dict
 
 
-def train(config, iteration, log_metrics, state, hiddens, train_loader, schedule_fn, rngs, ckpt_dir):
+def train(config, iteration, log_metrics, state, hiddens, train_loader, schedule_fn, rngs, ckpt_dir, p_train_step=None):
     progress = ProgressMeter(config.total_steps,
                              ['time', 'data'] + log_metrics)
     is_master_process = jax.process_index() == 0
 
     num_devices = jax.local_device_count()
-    p_train_step = jax.pmap(partial(train_step, config=config, vocab_size=config.vocab_size), axis_name='batch')
-
     end = time.time()
     for batch in train_loader:
         # inputs = jnp.array(batch[0].numpy())
@@ -241,7 +253,12 @@ def train(config, iteration, log_metrics, state, hiddens, train_loader, schedule
         if iteration < 3:
             print(f"hiddens shape {hiddens.shape}")
 
+        print("before p_train_step")
+        start_time = time.time()
         state, hiddens, return_dict, rngs, g_norms, gow_maxs, gow_mins = p_train_step(batch=batch, state=state, hiddens=hiddens, rng=rngs)
+        print("after p_train_step")
+        end_time = time.time()
+        print("The train step pmap time is", end_time - start_time)
 
         metrics = {k: return_dict[k].mean() for k in log_metrics}
         metrics = {k: v.astype(jnp.float32) for k, v in metrics.items()}
@@ -250,9 +267,9 @@ def train(config, iteration, log_metrics, state, hiddens, train_loader, schedule
         if is_master_process and iteration % config.log_interval == 0:
             wandb.log({'train/lr': schedule_fn(iteration)}, step=iteration)
             wandb.log({**{f'train/{metric}': val for metric, val in metrics.items()}}, step=iteration)
-            wandb.log({**{f'grad_norm/{layer}': jnp.linalg.norm(norm) for layer, norm in flatten_tree_with_names(g_norms).items()}}, step=iteration)
-            wandb.log({**{f'gow_max/{layer}': jnp.linalg.norm(norm) for layer, norm in flatten_tree_with_names(gow_maxs).items()}}, step=iteration)
-            wandb.log({**{f'gow_min/{layer}': jnp.linalg.norm(norm) for layer, norm in flatten_tree_with_names(gow_mins).items()}}, step=iteration)
+            # wandb.log({**{f'grad_norm/{layer}': jnp.linalg.norm(norm) for layer, norm in flatten_tree_with_names(g_norms).items()}}, step=iteration)
+            # wandb.log({**{f'gow_max/{layer}': jnp.linalg.norm(norm) for layer, norm in flatten_tree_with_names(gow_maxs).items()}}, step=iteration)
+            # wandb.log({**{f'gow_min/{layer}': jnp.linalg.norm(norm) for layer, norm in flatten_tree_with_names(gow_mins).items()}}, step=iteration)
 
         if iteration % config.log_interval == 0:
             progress.display(iteration)
@@ -268,6 +285,10 @@ def train(config, iteration, log_metrics, state, hiddens, train_loader, schedule
         end = time.time()
 
         iteration += 1
+
+        if iteration > config.total_steps:
+            print("Finished training")
+            break
 
     if is_master_process:
         state_ = jax_utils.unreplicate(state)
@@ -326,7 +347,7 @@ def eval_step_synthetic(config, batch, state, vocab_size):
     return loss, accuracy
 
 
-def validate(config, iteration, state, hiddens, test_loader, rngs, val=0, seq_len=None):
+def validate(config, iteration, state, hiddens, test_loader, rngs, val=0, seq_len=None, p_eval_step=None):
     losses = jnp.array([])
     accs = jnp.array([])
     is_master_process = jax.process_index() == 0
@@ -334,15 +355,10 @@ def validate(config, iteration, state, hiddens, test_loader, rngs, val=0, seq_le
     # Todo: may need to change for multinode
     num_devices = jax.local_device_count()
 
-    if config.dataset in ["wikitext103"]:
-        p_eval_step = jax.pmap(partial(eval_step, config=config, vocab_size=config.vocab_size), axis_name='batch')
-    elif config.dataset in ["icl_synthetics"]:
-        pass
-        # p_eval_step = jax.pmap(partial(eval_step_synthetic, config=config, vocab_size=config.vocab_size), axis_name='batch')
-    else:
-        raise NotImplementedError("Dataset not implemented")
+    for index, batch in enumerate(test_loader):
+        if index >= 16:
+            break
 
-    for batch in test_loader:
         # inputs = jnp.array(batch[0].numpy())
         # targets = jnp.array(batch[1].numpy())
         inputs = jnp.array(batch[:,:-1].numpy())
@@ -436,7 +452,7 @@ if __name__ == '__main__':
 
     args_d = vars(args)
     args_d.update(config)
-    pickle.dump(args, open(osp.join(args.output_dir, 'args'), 'wb'))
+    # pickle.dump(args, open(osp.join(args.output_dir, 'args'), 'wb'))
     config = args
 
     is_master_process = jax.process_index() == 0
@@ -447,5 +463,7 @@ if __name__ == '__main__':
     assert config.data_kwargs["batch_size_eval"] > 0
     assert config.data_kwargs["batch_size"] % jax.device_count() == 0, "Batch size must be divisible by the number of devices"
     config.l_max = config.train_length
+
+    print("The modified batch_size is", config.data_kwargs["batch_size"])
 
     main()

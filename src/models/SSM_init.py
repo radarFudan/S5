@@ -1,3 +1,4 @@
+# from https://github.com/lindermanlab/S5/blob/main/s5/ssm_init.py
 
 from jax import random
 import jax.numpy as np
@@ -25,8 +26,10 @@ def make_NPLR_HiPPO(N):
      From https://github.com/srush/annotated-s4/blob/main/s4/s4.py
     Args:
         N (int32): state size
+
     Returns:
         N x N HiPPO LegS matrix, low-rank factor P, HiPPO input matrix B
+
     """
     # Make -HiPPO
     hippo = make_HiPPO(N)
@@ -46,9 +49,11 @@ def make_DPLR_HiPPO(N):
     Note, we will only use the diagonal part
     Args:
         N:
+
     Returns:
         eigenvalues Lambda, low-rank term P, conjugated HiPPO input matrix B,
         eigenvectors V, HiPPO B pre-conjugation
+
     """
     A, P, B = make_NPLR_HiPPO(N)
 
@@ -75,7 +80,7 @@ def log_step_initializer(dt_min=0.001, dt_max=0.1):
          Returns:
              init function
      """
-    def init(key, shape):
+    def init(key, shape, dtype):
         """ Init function
              Args:
                  key: jax random key
@@ -83,7 +88,7 @@ def log_step_initializer(dt_min=0.001, dt_max=0.1):
              Returns:
                  sampled log_step (float32)
          """
-        return random.uniform(key, shape) * (
+        return random.uniform(key, shape, dtype=dtype) * (
             np.log(dt_max) - np.log(dt_min)
         ) + np.log(dt_min)
 

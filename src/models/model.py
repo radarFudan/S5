@@ -29,6 +29,7 @@ from jax.nn.initializers import lecun_normal, normal # TODO, check the differenc
 import flax
 from flax import linen as nn
 from flax.linen.initializers import normal as flax_normal
+from flax.linen.initializers import uniform
 from dataclasses import dataclass
 from einops import rearrange, repeat, einsum
 
@@ -37,6 +38,8 @@ from typing import Union
 import math
 
 from .pytorch_to_jax import convert_from_pytorch
+from .SSM_init import init_log_steps, log_step_initializer
+
 
 
 @dataclass
@@ -214,7 +217,11 @@ class MambaBlock(nn.Module):
         self.x_proj = nn.Dense(self.args.dt_rank + self.args.d_state * 2, use_bias=False)
         
         # dt_proj projects Δ from dt_rank to d_in
-        self.dt_proj = nn.Dense(self.args.d_inner, use_bias=True)
+        # self.dt_proj = nn.Dense(self.args.d_inner, use_bias=True)
+        self.dt_proj = nn.Dense(self.args.d_inner, 
+                                kernel_init=uniform(scale=self.args.dt_rank**-0.5), 
+                                bias_init=log_step_initializer(dt_min=0.001, dt_max=0.1),
+                                use_bias=True)
 
         A = np.tile(np.arange(1, self.args.d_state + 1), (self.args.d_inner, 1))
         self.A_log = self.param('A_log', lambda rng, shape: np.log(A), (self.args.d_inner, self.args.d_state))

@@ -29,6 +29,8 @@ import glob
 from pathlib import Path
 from mix_data import get_default_supported_precision, create_dataloaders
 
+import lightning as L
+
 
 def main():
     global model
@@ -56,15 +58,15 @@ def main():
         train_loader, val_loader, test_loader = create_wikitext_dataset(config)
     elif config.dataset in ["icl_synthetics"]:
         train_loader, val_loader, test_loader = create_icl_datasets(config)    
-    elif config.dataset in ["mix"]:
-        import lightning as L
+    elif config.dataset in ["pile"]:
 
         strategy="auto"
         tpu=False
         precision = None or get_default_supported_precision(training=True, tpu=tpu)
 
         fabric = L.Fabric(devices=1, strategy=strategy, precision=precision, loggers=[])
-        data_dir = Path("/home/aiops/wangsd/TinyLlama/data/mix_sample_combined_EleutherAI")
+        # data_dir = Path("/home/aiops/wangsd/TinyLlama/data/mix_sample_combined_EleutherAI")
+        data_dir = Path("/home/aiops/wangsd/TinyLlama/data/the_pile_deduplicated_EleutherAI_combined")
 
         train_loader, val_loader, test_loader = create_dataloaders(
             batch_size=config.data_kwargs["batch_size"],
@@ -141,15 +143,45 @@ def evaluation(config, rngs, iteration, state, consecutive_loader=True, evaluate
     # Initialize a list to store validation losses
     evaluation = []
 
+    if config.dataset in ["wikitext103"]:
+        p_eval_step = jax.pmap(partial(eval_step, config=config, vocab_size=config.vocab_size), axis_name='batch')
+    elif config.dataset in ["icl_synthetics"]:
+        pass
+        # p_eval_step = jax.pmap(partial(eval_step_synthetic, config=config, vocab_size=config.vocab_size), axis_name='batch')
+    elif config.dataset in ["pile"]:
+        p_eval_step = jax.pmap(partial(eval_step, config=config, vocab_size=config.vocab_size), axis_name='batch')
+    else:
+        raise NotImplementedError("Dataset not implemented")
+
+    strategy="auto"
+    tpu=False
+    precision = None or get_default_supported_precision(training=True, tpu=tpu)
+
+    fabric = L.Fabric(devices=1, strategy=strategy, precision=precision, loggers=[])
+    # data_dir = Path("/home/aiops/wangsd/TinyLlama/data/mix_sample_combined_EleutherAI")
+    data_dir = Path("/home/aiops/wangsd/TinyLlama/data/the_pile_deduplicated_EleutherAI_combined")
+
     seq_len_list = [16 * 2 ** i for i in range(0,12)] # 16 to 32768
     for seq_len in seq_len_list:
         # Change the sequence length for evaluation
         # TODO, care about the out of memory issue. 
         config.l_max = seq_len
-        config.data_kwargs["batch_size"] = max(int(16 * 2048 // seq_len), num_devices)
-        config.data_kwargs["batch_size_eval"] = max(int(16 * 2048 // seq_len), num_devices)
+
+        # bsz = max(int(16 * 2048 // seq_len), num_devices)
+
+        config.data_kwargs["batch_size"] = num_devices
+        config.data_kwargs["batch_size_eval"] = num_devices
+
         
-        train_loader, val_loader, test_loader = create_wikitext_dataset(config)
+        # train_loader, val_loader, test_loader = create_wikitext_dataset(config)
+        train_loader, val_loader, test_loader = create_dataloaders(
+            batch_size=config.data_kwargs["batch_size"],
+            block_size=config.l_max,
+            fabric=fabric,
+            train_data_dir=Path(data_dir),
+            val_data_dir=Path(data_dir),
+            seed=3412,
+        )
 
         batch = next(iter(train_loader))
         # inputs = jnp.array(batch[0].numpy())
@@ -173,21 +205,21 @@ def evaluation(config, rngs, iteration, state, consecutive_loader=True, evaluate
         else:
             raise NotImplementedError(f"Hidden state initialization for {config.layer} not implemented")
 
-        rngs, avg_loss, avg_perplexity, avg_accuracy = validate(config, iteration, state, zero_hiddens, val_loader, rngs, val=1, seq_len=seq_len)
+        rngs, avg_loss, avg_perplexity, avg_accuracy = validate(config, iteration, state, zero_hiddens, val_loader, rngs, val=1, seq_len=seq_len, p_eval_step=p_eval_step)
         evaluation.append((seq_len, 'val', avg_loss, avg_perplexity, avg_accuracy))
 
-        rngs, avg_loss, avg_perplexity, avg_accuracy = validate(config, iteration, state, zero_hiddens, test_loader, rngs, val=2, seq_len=seq_len)
+        rngs, avg_loss, avg_perplexity, avg_accuracy = validate(config, iteration, state, zero_hiddens, test_loader, rngs, val=2, seq_len=seq_len, p_eval_step=p_eval_step)
         evaluation.append((seq_len, 'test', avg_loss, avg_perplexity, avg_accuracy))
 
         if evaluate_train:
-            rngs, avg_loss, avg_perplexity, avg_accuracy = validate(config, iteration, state, zero_hiddens, train_loader, rngs, val=0, seq_len=seq_len)
+            rngs, avg_loss, avg_perplexity, avg_accuracy = validate(config, iteration, state, zero_hiddens, train_loader, rngs, val=0, seq_len=seq_len, p_eval_step=p_eval_step)
             evaluation.append((seq_len, 'train', avg_loss, avg_perplexity, avg_accuracy))
 
-    # Write the validation losses to a CSV file
-    with open(osp.join(config.output_dir, f'evaluation_consecutive{consecutive_loader}.csv'), 'w', newline='') as file:
-        writer = csv.writer(file)
-        writer.writerow(['Validation sequence Length', 'Dataset Type', 'Loss', 'Perplexity', 'Accuracy'])
-        writer.writerows(evaluation)
+        # Write the validation losses to a CSV file
+        with open(osp.join(config.output_dir, f'evaluation_consecutive{consecutive_loader}.csv'), 'w', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow(['Validation sequence Length', 'Dataset Type', 'Loss', 'Perplexity', 'Accuracy'])
+            writer.writerows(evaluation)
 
 
 if __name__ == '__main__':
@@ -221,7 +253,7 @@ if __name__ == '__main__':
 
     args_d = vars(args)
     args_d.update(config)
-    pickle.dump(args, open(osp.join(args.output_dir, 'args'), 'wb'))
+    # pickle.dump(args, open(osp.join(args.output_dir, 'args'), 'wb'))
     config = args
 
     is_master_process = jax.process_index() == 0

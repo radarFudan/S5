@@ -26,8 +26,8 @@ vocab_size: 50432
 l_max: 16
 
 data_kwargs:
-    batch_size: 8
-    batch_size_eval: 8
+    batch_size: 1
+    batch_size_eval: 1
     num_workers: 4
     pin_memory: False
     data_dir: ./

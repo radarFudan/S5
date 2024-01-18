@@ -1,7 +1,7 @@
 seed: 0
 
 # Wandb
-project: icml_Mamba_120M_zero_full_mix_V1
+project: icml_Mamba_120M_zero_full_pile_8cards_V0
 entity: # todo
 
 # Training
@@ -21,15 +21,13 @@ save_interval: 200000
 log_interval: 150
 
 # Data
-dataset: "mix"
-vocab_size: 50257
-l_max: 2048
+dataset: "pile"
+vocab_size: 50432
+l_max: 16
 
 data_kwargs:
-    # batch_size: 16
-    # batch_size_eval: 16
-    batch_size: 4
-    batch_size_eval: 4
+    batch_size: 8
+    batch_size_eval: 8
     num_workers: 4
     pin_memory: False
     data_dir: ./
@@ -70,7 +68,7 @@ layer_kwargs:
     d_state: 16
     expand: 2
     hidden_state_method: "zero"
-    vocab_size: 50257
+    vocab_size: 50432
 
 seq_model_kwargs:
     max_position_embeddings: 0

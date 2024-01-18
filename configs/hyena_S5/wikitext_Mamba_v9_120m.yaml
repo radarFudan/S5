@@ -1,7 +1,7 @@
 seed: 0
 
 # Wandb
-project: icml_Mamba_120M_previous_full_pile_8cards_V0
+project: icml_Mamba_120M_zero_full_pile_8cards_V1
 entity: # todo
 
 # Training
@@ -26,8 +26,8 @@ vocab_size: 50432
 l_max: 16
 
 data_kwargs:
-    batch_size: 8
-    batch_size_eval: 8
+    batch_size: 16
+    batch_size_eval: 16
     num_workers: 4
     pin_memory: False
     data_dir: ./
@@ -67,7 +67,7 @@ layer_kwargs:
         activation: "gelu"
     d_state: 16
     expand: 2
-    hidden_state_method: "previous"
+    hidden_state_method: "zero"
     vocab_size: 50432
 
 seq_model_kwargs:
