@@ -1,7 +1,7 @@
 seed: 0
 
 # Wandb
-project: Mamba_120M_previous_pile_1cards_V0
+project: Mamba_1B_zero_pile_1cards_V0
 entity: # todo
 
 # Training
@@ -23,7 +23,7 @@ log_interval: 50
 # Data
 dataset: "pile"
 vocab_size: 50432
-l_max: 2048
+l_max: 256
 
 data_kwargs:
     batch_size: 2
@@ -38,9 +38,9 @@ rng_keys: ["dropout", "hidden_state"]
 
 # Model
 model: 'hyena_simplelm'
-d_model: 768
-n_layer: 12
-d_inner: 3072
+d_model: 2048
+n_layer: 24
+d_inner: 8192
 
 layer: "Mamba_operator"
 layer_kwargs:
@@ -67,7 +67,7 @@ layer_kwargs:
         activation: "gelu"
     d_state: 16
     expand: 2
-    hidden_state_method: "previous"
+    hidden_state_method: "zero"
     vocab_size: 50432
 
 seq_model_kwargs:
