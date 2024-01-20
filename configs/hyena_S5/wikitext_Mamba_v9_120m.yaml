@@ -1,7 +1,7 @@
 seed: 0
 
 # Wandb
-project: icml_Mamba_120M_zero_full_pile_8cards_V1
+project: Mamba_120M_zero_pile_1cards_V0
 entity: # todo
 
 # Training
@@ -17,8 +17,8 @@ implicit_filter_weight_decay: 0.0
 lr_schedule: "cosine"
 total_steps: 460000 #100 epochs, bsz 32 takes 3600 steps for epoch
 warmup_steps: 4000
-save_interval: 3000
-log_interval: 150
+save_interval: 4000
+log_interval: 50
 
 # Data
 dataset: "pile"

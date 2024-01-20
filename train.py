@@ -125,15 +125,15 @@ def main():
 
     rngs = random.split(rng, jax.local_device_count())
 
-    with jax.disable_jit():
-        while iteration <= config.total_steps:
-            iteration, state, rngs = train(config, iteration, log_metrics, state, zero_hiddens, train_loader,
-                                        schedule_fn, rngs, ckpt_dir, p_train_step=p_train_step)
+    # with jax.disable_jit():
+    while iteration <= config.total_steps:
+        iteration, state, rngs = train(config, iteration, log_metrics, state, zero_hiddens, train_loader,
+                                    schedule_fn, rngs, ckpt_dir, p_train_step=p_train_step)
 
-            rngs, avg_loss, avg_perplexity, avg_accuracy = validate(config, iteration, state, zero_hiddens, val_loader, rngs, val=1)
-            print("For validation set", avg_loss, avg_perplexity, avg_accuracy, p_eval_step=p_eval_step)
-            rngs, avg_loss, avg_perplexity, avg_accuracy = validate(config, iteration, state, zero_hiddens, test_loader, rngs, val=2)
-            print("For test set", avg_loss, avg_perplexity, avg_accuracy, p_eval_step=p_eval_step)
+        rngs, avg_loss, avg_perplexity, avg_accuracy = validate(config, iteration, state, zero_hiddens, val_loader, rngs, val=1)
+        print("For validation set", avg_loss, avg_perplexity, avg_accuracy, p_eval_step=p_eval_step)
+        rngs, avg_loss, avg_perplexity, avg_accuracy = validate(config, iteration, state, zero_hiddens, test_loader, rngs, val=2)
+        print("For test set", avg_loss, avg_perplexity, avg_accuracy, p_eval_step=p_eval_step)
 
 
 def train_step(config, batch, state, hiddens, rng, vocab_size):

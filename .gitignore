@@ -170,3 +170,4 @@ logs*
 *.sh
 TinyLlama
 tokenizer_name*
+script_logs
