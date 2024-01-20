@@ -163,12 +163,13 @@ class Mamba(nn.Module):
 
 class ResidualBlock(nn.Module):
     args:ModelArgs
+    hidden_state_method: str = "zero"
     # include other necessary parameters from ModelArgs if needed
 
     def setup(self):
         """Full Mamba model."""
         super().__init__()
-        self.mixer = MambaBlock(self.args)
+        self.mixer = MambaBlock(self.args, hidden_state_method=self.hidden_state_method)
         self.norm = RMSNorm(self.args.d_model)
 
     @nn.compact

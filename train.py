@@ -113,23 +113,11 @@ def main():
     state = jax_utils.replicate(state)
 
     ckpt_dir = osp.join(config.output_dir, 'checkpoints')
-
-
-
-    # with jax.disable_jit():
-    start_time = time.time()
+    
     p_train_step = jax.pmap(partial(train_step, config=config, vocab_size=config.vocab_size), axis_name='batch')
-    end_time = time.time()
-    train_step_execution_time = end_time - start_time
-    print("The train step pmap construction time is", train_step_execution_time)
 
     if config.dataset in ["wikitext103", "pile"]:        
-        start_time = time.time()
         p_eval_step = jax.pmap(partial(eval_step, config=config, vocab_size=config.vocab_size), axis_name='batch')
-        end_time = time.time()
-        eval_step_execution_time = end_time - start_time
-        print("The eval step pmap time construction is", eval_step_execution_time)
-
     elif config.dataset in ["icl_synthetics"]:
         pass
     else:
@@ -137,14 +125,15 @@ def main():
 
     rngs = random.split(rng, jax.local_device_count())
 
-    while iteration <= config.total_steps:
-        iteration, state, rngs = train(config, iteration, log_metrics, state, zero_hiddens, train_loader,
-                                    schedule_fn, rngs, ckpt_dir, p_train_step=p_train_step)
+    with jax.disable_jit():
+        while iteration <= config.total_steps:
+            iteration, state, rngs = train(config, iteration, log_metrics, state, zero_hiddens, train_loader,
+                                        schedule_fn, rngs, ckpt_dir, p_train_step=p_train_step)
 
-        rngs, avg_loss, avg_perplexity, avg_accuracy = validate(config, iteration, state, zero_hiddens, val_loader, rngs, val=1)
-        print("For validation set", avg_loss, avg_perplexity, avg_accuracy, p_eval_step=p_eval_step)
-        rngs, avg_loss, avg_perplexity, avg_accuracy = validate(config, iteration, state, zero_hiddens, test_loader, rngs, val=2)
-        print("For test set", avg_loss, avg_perplexity, avg_accuracy, p_eval_step=p_eval_step)
+            rngs, avg_loss, avg_perplexity, avg_accuracy = validate(config, iteration, state, zero_hiddens, val_loader, rngs, val=1)
+            print("For validation set", avg_loss, avg_perplexity, avg_accuracy, p_eval_step=p_eval_step)
+            rngs, avg_loss, avg_perplexity, avg_accuracy = validate(config, iteration, state, zero_hiddens, test_loader, rngs, val=2)
+            print("For test set", avg_loss, avg_perplexity, avg_accuracy, p_eval_step=p_eval_step)
 
 
 def train_step(config, batch, state, hiddens, rng, vocab_size):
@@ -253,12 +242,8 @@ def train(config, iteration, log_metrics, state, hiddens, train_loader, schedule
         if iteration < 3:
             print(f"hiddens shape {hiddens.shape}")
 
-        print("before p_train_step")
-        start_time = time.time()
-        state, hiddens, return_dict, rngs, g_norms, gow_maxs, gow_mins = p_train_step(batch=batch, state=state, hiddens=hiddens, rng=rngs)
-        print("after p_train_step")
-        end_time = time.time()
-        print("The train step pmap time is", end_time - start_time)
+        # state, hiddens, return_dict, rngs, g_norms, gow_maxs, gow_mins = p_train_step(batch=batch, state=state, hiddens=hiddens, rng=rngs)
+        state, hiddens, return_dict, rngs, _, _, _ = p_train_step(batch=batch, state=state, hiddens=hiddens, rng=rngs)
 
         metrics = {k: return_dict[k].mean() for k in log_metrics}
         metrics = {k: v.astype(jnp.float32) for k, v in metrics.items()}
@@ -270,6 +255,9 @@ def train(config, iteration, log_metrics, state, hiddens, train_loader, schedule
             # wandb.log({**{f'grad_norm/{layer}': jnp.linalg.norm(norm) for layer, norm in flatten_tree_with_names(g_norms).items()}}, step=iteration)
             # wandb.log({**{f'gow_max/{layer}': jnp.linalg.norm(norm) for layer, norm in flatten_tree_with_names(gow_maxs).items()}}, step=iteration)
             # wandb.log({**{f'gow_min/{layer}': jnp.linalg.norm(norm) for layer, norm in flatten_tree_with_names(gow_mins).items()}}, step=iteration)
+
+        if iteration <= 8:
+            progress.display(iteration)
 
         if iteration % config.log_interval == 0:
             progress.display(iteration)
@@ -356,7 +344,7 @@ def validate(config, iteration, state, hiddens, test_loader, rngs, val=0, seq_le
     num_devices = jax.local_device_count()
 
     for index, batch in enumerate(test_loader):
-        if index >= 16:
+        if index >= 8:
             break
 
         # inputs = jnp.array(batch[0].numpy())

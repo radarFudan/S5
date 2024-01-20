@@ -5,8 +5,8 @@ project: icml_Mamba_120M_previous_full_pile_8cards_V1
 entity: # todo
 
 # Training
-lr: 0.001
-weight_decay: 0.25
+lr: 0.0001
+weight_decay: 0.1
 
 t_lr: 0.0      # time embedding lr
 z_lr: 0.0      # positional embedding lr
@@ -15,21 +15,20 @@ implicit_filter_lr:  0.0008
 implicit_filter_weight_decay: 0.0
 
 lr_schedule: "cosine"
-total_steps: 115000 #100 epochs, bsz 32 takes 3600 steps for epoch
-warmup_steps: 1000
-save_interval: 200000
-log_interval: 150
+total_steps: 460000 #100 epochs, bsz 32 takes 3600 steps for epoch
+warmup_steps: 4000
+save_interval: 4000
+# log_interval: 150
+log_interval: 50
 
 # Data
 dataset: "pile"
 vocab_size: 50432
-l_max: 16
+l_max: 2048
 
 data_kwargs:
-    # batch_size: 64
-    # batch_size_eval: 64
-    batch_size: 8
-    batch_size_eval: 8
+    batch_size: 2
+    batch_size_eval: 2
     num_workers: 4
     pin_memory: False
     data_dir: ./
