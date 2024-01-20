@@ -1,0 +1,12 @@
+The training length is 16
+JAX process: 0 / 1
+JAX total devices: 1
+JAX local devices: 1
+DATA_DIR environment variable not set, default to logs/
+Logging to logs/LSTM_zero_V0_T16
+[*] Creating wikitext-103 Dataset
+Using consecutive loader
+Using consecutive loader
+Using consecutive loader
+Using zero init hidden state
+In SimpleLMHeadModel (2048, 16) (2048, 12, 768, 2)

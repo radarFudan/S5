@@ -1,7 +1,7 @@
 seed: 0
 
 # Wandb
-project: icml_LSTM_30M_zero_full_silicon
+project: icml_LSTM_30M_zero_V0
 entity: # todo
 
 # Training
@@ -39,9 +39,6 @@ rng_keys: ["dropout", "hidden_state"]
 
 # Model
 model: 'hyena_simplelm'
-# d_model: 768
-# n_layer: 12
-# d_inner: 3072
 d_model: 384
 n_layer: 6
 d_inner: 1536
