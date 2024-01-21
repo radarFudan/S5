@@ -302,9 +302,9 @@ class LMBackbone(nn.Module):
             if layer_index < 1:
                 assert preds is not None
                 assert len(hiddens.shape) == 3, "hiddens shape is {}".format(hiddens.shape)
-                assert hiddens[:,layer_index, :, :] is not None
+                assert hiddens[:,layer_index, :] is not None
                 # print("preds.shape", preds.shape, "\nhiddens at layer shape", hiddens[:,layer_index, :, :].shape)
-            preds, residual, new_hidden = layer(preds, hiddens[:, layer_index, :, :], training, residual, layer_index=layer_index)
+            preds, residual, new_hidden = layer(preds, hiddens[:, layer_index, :], training, residual, layer_index=layer_index)
             new_hiddens.append(new_hidden)
 
         dropped = self.drop_f(deterministic=not training)(preds)

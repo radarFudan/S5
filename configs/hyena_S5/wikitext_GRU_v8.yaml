@@ -1,7 +1,7 @@
 seed: 0
 
 # Wandb
-project: icml_GRU_30M_previous_full_silicon
+project: icml_GRU_30M_V0
 entity: # todo
 
 # Training
@@ -24,7 +24,7 @@ log_interval: 150
 # Data
 dataset: "wikitext103"
 vocab_size: 50257
-l_max: 2048
+l_max: 1024
 
 data_kwargs:
     batch_size: 16
