@@ -161,14 +161,24 @@ def evaluation(config, rngs, iteration, state, consecutive_loader=True, evaluate
         else:
             raise NotImplementedError(f"Hidden state initialization for {config.layer} not implemented")
 
-        rngs, avg_loss, avg_perplexity, avg_accuracy = validate(config, iteration, state, zero_hiddens, val_loader, rngs, val=1, seq_len=seq_len)
+        
+        if config.dataset in ["wikitext103"]:
+            p_eval_step = jax.pmap(partial(eval_step, config=config, vocab_size=config.vocab_size), axis_name='batch')
+        elif config.dataset in ["icl_synthetics"]:
+            pass
+            # p_eval_step = jax.pmap(partial(eval_step_synthetic, config=config, vocab_size=config.vocab_size), axis_name='batch')
+        else:
+            raise NotImplementedError("Dataset not implemented")
+
+
+        rngs, avg_loss, avg_perplexity, avg_accuracy = validate(config, iteration, state, zero_hiddens, val_loader, rngs, val=1, seq_len=seq_len, p_eval_step=p_eval_step)
         evaluation.append((seq_len, 'val', avg_loss, avg_perplexity, avg_accuracy))
 
-        rngs, avg_loss, avg_perplexity, avg_accuracy = validate(config, iteration, state, zero_hiddens, test_loader, rngs, val=2, seq_len=seq_len)
+        rngs, avg_loss, avg_perplexity, avg_accuracy = validate(config, iteration, state, zero_hiddens, test_loader, rngs, val=2, seq_len=seq_len, p_eval_step=p_eval_step)
         evaluation.append((seq_len, 'test', avg_loss, avg_perplexity, avg_accuracy))
 
         if evaluate_train:
-            rngs, avg_loss, avg_perplexity, avg_accuracy = validate(config, iteration, state, zero_hiddens, train_loader, rngs, val=0, seq_len=seq_len)
+            rngs, avg_loss, avg_perplexity, avg_accuracy = validate(config, iteration, state, zero_hiddens, train_loader, rngs, val=0, seq_len=seq_len, p_eval_step=p_eval_step)
             evaluation.append((seq_len, 'train', avg_loss, avg_perplexity, avg_accuracy))
 
         # Write the validation losses to a CSV file

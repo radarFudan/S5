@@ -363,7 +363,8 @@ class LSTM_Operator(nn.Module):
         elif self.hidden_state_method == "zero":
             carry = self.layer.initialize_carry(jax.random.key(1), x[:,0,:].shape) # make it zero
             carry = np.stack(carry, axis=-1) # B * D * 2
-            # print("In LSTM_Operator, this should be zero carry", carry)
+            if layer_index < 1:
+                print("In LSTM_Operator, this should be zero carry", carry)
         else:
             raise NotImplementedError(f"hidden_state_method {self.hidden_state_method} not implemented")
 

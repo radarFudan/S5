@@ -73,8 +73,8 @@ def main():
         zero_hiddens = jax.numpy.zeros((batch_size_per_device, config.n_layer, config.d_model, 2))
         zero_hiddens_init_model_state = jax.numpy.zeros((batch_size_per_device // num_devices, config.n_layer, config.d_model, 2))
     elif config.layer == "GRU_operator": # B * layers * 1 (time) * d_model
-        zero_hiddens = jax.numpy.zeros((batch_size_per_device, config.n_layer, config.d_model, 2))
-        zero_hiddens_init_model_state = jax.numpy.zeros((batch_size_per_device // num_devices, config.n_layer, config.d_model, 2))
+        zero_hiddens = jax.numpy.zeros((batch_size_per_device, config.n_layer, config.d_model))
+        zero_hiddens_init_model_state = jax.numpy.zeros((batch_size_per_device // num_devices, config.n_layer, config.d_model))
     else:
         raise NotImplementedError(f"Hidden state initialization for {config.layer} not implemented")
 
@@ -97,14 +97,25 @@ def main():
     ckpt_dir = osp.join(config.output_dir, 'checkpoints')
 
     rngs = random.split(rng, jax.local_device_count())
+
+    p_train_step = jax.pmap(partial(train_step, config=config, vocab_size=config.vocab_size), axis_name='batch')
+    if config.dataset in ["wikitext103"]:
+        p_eval_step = jax.pmap(partial(eval_step, config=config, vocab_size=config.vocab_size), axis_name='batch')
+    elif config.dataset in ["icl_synthetics"]:
+        pass
+        # p_eval_step = jax.pmap(partial(eval_step_synthetic, config=config, vocab_size=config.vocab_size), axis_name='batch')
+    else:
+        raise NotImplementedError("Dataset not implemented")
+
+    # with jax.disable_jit():
     while iteration <= config.total_steps:
         iteration, state, rngs = train(config, iteration, log_metrics, state, zero_hiddens, train_loader,
-                                       schedule_fn, rngs, ckpt_dir)
+                                    schedule_fn, rngs, ckpt_dir, p_train_step=p_train_step)
 
         rngs, avg_loss, avg_perplexity, avg_accuracy = validate(config, iteration, state, zero_hiddens, val_loader, rngs, val=1)
-        print("For validation set", avg_loss, avg_perplexity, avg_accuracy)
+        print("For validation set", avg_loss, avg_perplexity, avg_accuracy, p_eval_step=p_eval_step)
         rngs, avg_loss, avg_perplexity, avg_accuracy = validate(config, iteration, state, zero_hiddens, test_loader, rngs, val=2)
-        print("For test set", avg_loss, avg_perplexity, avg_accuracy)
+        print("For test set", avg_loss, avg_perplexity, avg_accuracy, p_eval_step=p_eval_step)
 
 
 def train_step(config, batch, state, hiddens, rng, vocab_size):
@@ -175,13 +186,12 @@ def flatten_tree_with_names(tree):
     return flat_dict
 
 
-def train(config, iteration, log_metrics, state, hiddens, train_loader, schedule_fn, rngs, ckpt_dir):
+def train(config, iteration, log_metrics, state, hiddens, train_loader, schedule_fn, rngs, ckpt_dir, p_train_step=None):
     progress = ProgressMeter(config.total_steps,
                              ['time', 'data'] + log_metrics)
     is_master_process = jax.process_index() == 0
 
     num_devices = jax.local_device_count()
-    p_train_step = jax.pmap(partial(train_step, config=config, vocab_size=config.vocab_size), axis_name='batch')
 
     end = time.time()
     for batch in train_loader:
@@ -232,6 +242,9 @@ def train(config, iteration, log_metrics, state, hiddens, train_loader, schedule
             wandb.log({**{f'gow_min/{layer}': jnp.linalg.norm(norm) for layer, norm in flatten_tree_with_names(gow_mins).items()}}, step=iteration)
 
         if iteration % config.log_interval == 0:
+            progress.display(iteration)
+
+        if iteration <= 12:
             progress.display(iteration)
 
         if iteration % config.save_interval == 0:
@@ -303,21 +316,13 @@ def eval_step_synthetic(config, batch, state, vocab_size):
     return loss, accuracy
 
 
-def validate(config, iteration, state, hiddens, test_loader, rngs, val=0, seq_len=None):
+def validate(config, iteration, state, hiddens, test_loader, rngs, val=0, seq_len=None, p_eval_step=None):
     losses = jnp.array([])
     accs = jnp.array([])
     is_master_process = jax.process_index() == 0
 
     # Todo: may need to change for multinode
     num_devices = jax.local_device_count()
-
-    if config.dataset in ["wikitext103"]:
-        p_eval_step = jax.pmap(partial(eval_step, config=config, vocab_size=config.vocab_size), axis_name='batch')
-    elif config.dataset in ["icl_synthetics"]:
-        pass
-        # p_eval_step = jax.pmap(partial(eval_step_synthetic, config=config, vocab_size=config.vocab_size), axis_name='batch')
-    else:
-        raise NotImplementedError("Dataset not implemented")
 
     for batch in test_loader:
         inputs = jnp.array(batch[0].numpy())

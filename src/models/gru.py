@@ -360,7 +360,8 @@ class GRU_Operator(nn.Module):
             assert carry is not None
         elif self.hidden_state_method == "zero":
             carry = self.layer.initialize_carry(jax.random.key(1), x[:,0,:].shape) # make it zero, B * D
-            print("In GRU_Operator, this should be zero carry", carry)
+            if layer_index < 1:
+                print("In GRU_Operator, this should be zero carry", carry)
         else:
             raise NotImplementedError(f"hidden_state_method {self.hidden_state_method} not implemented")
 
