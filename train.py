@@ -85,14 +85,25 @@ def main():
 
     ckpt_dir = osp.join(config.output_dir, 'checkpoints')
 
+
+    p_train_step = jax.pmap(partial(train_step, config=config, vocab_size=config.vocab_size), axis_name='batch')
+    if config.dataset in ["wikitext103"]:
+        p_eval_step = jax.pmap(partial(eval_step, config=config, vocab_size=config.vocab_size), axis_name='batch')
+    elif config.dataset in ["icl_synthetics"]:
+        pass
+        # p_eval_step = jax.pmap(partial(eval_step_synthetic, config=config, vocab_size=config.vocab_size), axis_name='batch')
+    else:
+        raise NotImplementedError("Dataset not implemented")
+
+
     rngs = random.split(rng, jax.local_device_count())
     while iteration <= config.total_steps:
         iteration, state, rngs = train(config, iteration, log_metrics, state, zero_hiddens, train_loader,
-                                       schedule_fn, rngs, ckpt_dir)
+                                       schedule_fn, rngs, ckpt_dir, p_train_step=p_train_step)
 
-        rngs, avg_loss, avg_perplexity, avg_accuracy = validate(config, iteration, state, zero_hiddens, val_loader, rngs, val=1)
+        rngs, avg_loss, avg_perplexity, avg_accuracy = validate(config, iteration, state, zero_hiddens, val_loader, rngs, val=1, p_eval_step=p_eval_step)
         print("For validation set", avg_loss, avg_perplexity, avg_accuracy)
-        rngs, avg_loss, avg_perplexity, avg_accuracy = validate(config, iteration, state, zero_hiddens, test_loader, rngs, val=2)
+        rngs, avg_loss, avg_perplexity, avg_accuracy = validate(config, iteration, state, zero_hiddens, test_loader, rngs, val=2, p_eval_step=p_eval_step)
         print("For test set", avg_loss, avg_perplexity, avg_accuracy)
 
 
@@ -164,13 +175,12 @@ def flatten_tree_with_names(tree):
     return flat_dict
 
 
-def train(config, iteration, log_metrics, state, hiddens, train_loader, schedule_fn, rngs, ckpt_dir):
+def train(config, iteration, log_metrics, state, hiddens, train_loader, schedule_fn, rngs, ckpt_dir, p_train_step=None):
     progress = ProgressMeter(config.total_steps,
                              ['time', 'data'] + log_metrics)
     is_master_process = jax.process_index() == 0
 
     num_devices = jax.local_device_count()
-    p_train_step = jax.pmap(partial(train_step, config=config, vocab_size=config.vocab_size), axis_name='batch')
 
     end = time.time()
     for batch in train_loader:
@@ -283,21 +293,13 @@ def eval_step_synthetic(config, batch, state, vocab_size):
     return loss, accuracy
 
 
-def validate(config, iteration, state, hiddens, test_loader, rngs, val=0, seq_len=None):
+def validate(config, iteration, state, hiddens, test_loader, rngs, val=0, seq_len=None, p_eval_step=None):
     losses = jnp.array([])
     accs = jnp.array([])
     is_master_process = jax.process_index() == 0
 
     # Todo: may need to change for multinode
     num_devices = jax.local_device_count()
-
-    if config.dataset in ["wikitext103"]:
-        p_eval_step = jax.pmap(partial(eval_step, config=config, vocab_size=config.vocab_size), axis_name='batch')
-    elif config.dataset in ["icl_synthetics"]:
-        pass
-        # p_eval_step = jax.pmap(partial(eval_step_synthetic, config=config, vocab_size=config.vocab_size), axis_name='batch')
-    else:
-        raise NotImplementedError("Dataset not implemented")
 
     for batch in test_loader:
         inputs = jnp.array(batch[0].numpy())
