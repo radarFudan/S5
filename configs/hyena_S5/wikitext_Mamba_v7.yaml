@@ -1,7 +1,7 @@
 seed: 0
 
 # Wandb
-project: icml_Mamba_30M_zero_full
+project: icml_Mamba_120M_zero_full
 entity: # todo
 
 # Training
@@ -17,7 +17,9 @@ implicit_filter_weight_decay: 0.0
 lr_schedule: "cosine"
 total_steps: 115000 #100 epochs, bsz 32 takes 3600 steps for epoch
 warmup_steps: 1000
-save_interval: 200000
+# total_steps: 230000 #100 epochs, bsz 32 takes 3600 steps for epoch
+# warmup_steps: 2000
+save_interval: 7200
 log_interval: 150
 
 # Data
@@ -26,8 +28,6 @@ vocab_size: 50257
 l_max: 2048
 
 data_kwargs:
-    # batch_size: 16
-    # batch_size_eval: 16
     batch_size: 4
     batch_size_eval: 4
     num_workers: 4
@@ -40,12 +40,12 @@ rng_keys: ["dropout", "hidden_state"]
 
 # Model
 model: 'hyena_simplelm'
-# d_model: 768
-# n_layer: 12
-# d_inner: 3072
-d_model: 384
-n_layer: 6
-d_inner: 1536
+d_model: 768
+n_layer: 12
+d_inner: 3072
+# d_model: 384
+# n_layer: 6
+# d_inner: 1536
 
 layer: "Mamba_operator"
 layer_kwargs:
